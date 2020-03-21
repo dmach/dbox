@@ -1,0 +1,141 @@
+#!/usr/bin/python3
+# PYTHON_ARGCOMPLETE_OK
+
+
+import argparse
+import os
+import re
+import subprocess
+import urllib.parse
+
+try:
+    import argcomplete
+    USE_ARGCOMPLETE = True
+except ImportError:
+    USE_ARGCOMPLETE = False
+
+
+# cache directory according to XDG
+XDG_CACHE_HOME = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
+CACHE_DIR = os.path.join(XDG_CACHE_HOME, "gitc")
+
+
+RE_GITURL = [
+    re.compile(r"^(?P<repo>[^#]+)/pull(-request)?/(?P<pull>[\d]+)"),
+    re.compile(r"^(?P<repo>[^#]+)/tree/(?P<branch>.+)"),
+    re.compile(r"^(?P<repo>[^#]+)(##(?P<hash>.+)|#pr#(?P<pull>[\d]+)|#(?P<branch>.+))?"),
+]
+
+
+def list_cached_repos(prefix, parsed_args, **kwargs):
+    dirs = os.listdir(CACHE_DIR)
+    dirs = [urllib.parse.unquote(i) for i in dirs]
+    dirs = [i for i in dirs if i.startswith(prefix)]
+    return dirs
+
+
+def get_parser():
+    parser = argparse.ArgumentParser(
+        usage="%(prog)s [git options] [--] <repository> [directory]",
+        description=
+            "Clone a git repo while using user's git cache.\n"
+            "\n"
+            "Extended syntax for specifying a branch, a commit hash or a pull request:\n"
+            " * %(prog)s https://example.com/.../repo.git#<branch>\n"
+            " * %(prog)s https://example.com/.../repo.git##<hash>\n"
+            " * %(prog)s https://example.com/.../repo.git#pr#<number>\n"
+            " * %(prog)s https://example.com/.../repo.git/pull/<number>\n"
+            " * %(prog)s https://example.com/.../repo.git/pull-request/<number>\n"
+            " * %(prog)s https://example.com/.../repo.git/tree/<branch>\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    parser.add_argument(
+        "repository",
+        help=
+            "The (possibly remote) repository to clone from."
+            " See the GIT URLS section below for more information on specifying repositories.",
+    ).completer = list_cached_repos
+
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        help=
+            "The name of a new directory to clone into."
+            " The \"humanish\" part of the source repository is used if no directory is explicitly given"
+            " (repo for /path/to/repo.git and foo for host.xz:foo/.git). Cloning into an existing"
+            " directory is only allowed if the directory is empty.",
+    )
+    return parser
+
+
+def get_cache_dir(repository):
+    repository = repository.strip("/")
+    repository = urllib.parse.quote(repository)
+    repository = repository.replace("/", "%2F")
+    return os.path.join(CACHE_DIR, repository)
+
+
+def main():
+    parser = get_parser()
+    if USE_ARGCOMPLETE:
+        argcomplete.autocomplete(parser)
+    args, git_args = parser.parse_known_args()
+
+    for pattern in RE_GITURL:
+        match = pattern.match(args.repository)
+        if match:
+            break
+
+    if not match:
+        parser.error("Couldn't parse repository url: %s" % args.repository)
+
+    git_repo = match.groupdict()["repo"]
+    git_branch = match.groupdict().get("branch", None)
+    git_hash = match.groupdict().get("hash", None)
+    git_pull = match.groupdict().get("pull")
+
+    # append ".git"; URL suggested by GitHub ends with .git, but PR URLs don't
+    # we want both to share the same cache dir
+    if not git_repo.endswith(".git"):
+        git_repo += ".git"
+
+    directory = args.directory or os.path.basename(git_repo).replace(".git", "")
+    git_args += [git_repo, directory]
+
+    try:
+        os.makedirs(CACHE_DIR)
+    except FileExistsError:
+        pass
+
+    cache_dir = get_cache_dir(git_repo)
+    if os.path.exists(cache_dir):
+        cmd = ["git", "fetch", "--all"]
+        subprocess.call(cmd, cwd=cache_dir)
+    else:
+        cmd = ["git", "clone", "--mirror"]
+        cmd += [git_repo]
+        cmd += [cache_dir]
+        subprocess.call(cmd)
+
+    cmd = ["git", "clone"]
+    cmd += ["--reference-if-able=%s" % cache_dir, "--dissociate"]
+    cmd += git_args
+    subprocess.call(cmd)
+
+    if git_branch:
+        cmd = ["git", "checkout", git_branch]
+        subprocess.call(cmd, cwd=directory)
+    elif git_hash:
+        cmd = ["git", "reset", "--hard", git_branch]
+        subprocess.call(cmd, cwd=directory)
+    if git_pull:
+        git_pull = int(git_pull)
+        cmd = ["git", "fetch", "origin", "pull/%d/head:pr/%d" % (git_pull, git_pull)]
+        subprocess.call(cmd, cwd=directory)
+        cmd = ["git", "checkout", "pr/%d" % git_pull]
+        subprocess.call(cmd, cwd=directory)
+
+
+if __name__ == "__main__":
+    main()

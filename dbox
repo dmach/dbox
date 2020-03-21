@@ -1,0 +1,936 @@
+#!/usr/bin/python3
+# PYTHON_ARGCOMPLETE_OK
+
+
+import argparse
+import distutils.sysconfig
+import fnmatch
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+
+import yaml
+
+try:
+    import argcomplete
+    USE_ARGCOMPLETE = True
+except ImportError:
+    USE_ARGCOMPLETE = False
+
+
+# config directory according to XDG
+XDG_CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+CONFIG_DIR = os.path.join(XDG_CONFIG_HOME, "dbox")
+
+# cache directory according to XDG
+XDG_CACHE_HOME = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
+CACHE_DIR = os.path.join(XDG_CACHE_HOME, "dbox")
+
+# detect if running in a container
+DBOX_CONTAINER = os.environ.get("DBOX_CONTAINER", "0") == "1"
+
+# additional variables set inside a container
+DBOX_STACK = os.environ.get("DBOX_STACK", None)
+DBOX_BASE_IMAGE_NAME = os.environ.get("DBOX_BASE_IMAGE_NAME", None)
+DBOX_BASE_IMAGE_VERSION = os.environ.get("DBOX_BASE_IMAGE_VERSION", None)
+
+
+# environment variables used in the path tweaks
+PATHS_ENV = {
+    "PYTHON3_SITEARCH": distutils.sysconfig.get_python_lib(1),
+    "PYTHON3_SITELIB": distutils.sysconfig.get_python_lib(),
+    "LIBDIR": distutils.sysconfig.get_config_var("LIBDIR"),
+}
+
+
+# paths to be used in project path tweaks
+PATHS = {
+    "CMAKE_MODULE_PATH": ["/usr/share/cmake/Modules"],
+    "CMAKE_PREFIX_PATH": ["/usr"],
+    "CPATH": ["/usr/include"],
+    "LD_LIBRARY_PATH": [PATHS_ENV["LIBDIR"]],
+    "LIBRARY_PATH": [PATHS_ENV["LIBDIR"]],
+    "PATH": ["/usr/sbin", "/usr/bin"],
+    "PKG_CONFIG_PATH": distutils.sysconfig.get_config_var("LIBPC"),
+    "PKG_CONFIG_SYSTEM_INCLUDE_PATH": ["/usr/include"],
+    "PYTHONPATH": [PATHS_ENV["PYTHON3_SITEARCH"], PATHS_ENV["PYTHON3_SITELIB"]],
+}
+
+
+# commands to update all packages in a container
+UPGRADE_ALL_PACKAGES = {
+    "default": "dnf -y distro-sync --refresh",
+}
+
+
+# commands to install dbox dependencies container
+INSTALL_DBOX_DEPENDENCIES = {
+    "default": "dnf -y install bash-completion ccache cmake diffutils dnf-plugins-core dnf-utils git-core less make patch python3-argcomplete python3-pip python3-yaml vim-enhanced wget",
+}
+
+
+def mkdirs(path):
+    try:
+        os.makedirs(path)
+    except FileExistsError:
+        pass
+
+
+class OSRelease:
+    RE = re.compile(r"^(?P<key>.+?)=(?P<value>.+)$")
+
+    def __init__(self, root="/"):
+        self._data = self._parse(root)
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    @property
+    def distro_name(self):
+        return "{ID}".format(**self._data)
+
+    @property
+    def distro_version(self):
+        return "{VERSION_ID}".format(**self._data)
+
+    @property
+    def distro_name_version(self):
+        return "{ID}-{VERSION_ID}".format(**self._data)
+
+    def _parse(self, root):
+        result = {}
+        path = os.path.join(root, "etc/os-release")
+        with open(path, "r") as f:
+            for line in f.readlines():
+                match = self.RE.match(line)
+                if not match:
+                    continue
+                key, value = match.groups()
+                key = key.strip()
+                value = value.strip()
+                if value.startswith("\"") and value.endswith("\""):
+                    value = value[1:-1]
+                elif value.startswith("'") and value.endswith("'"):
+                    value = value[1:-1]
+                result[key] = value
+        return result
+
+
+class Podman:
+    def __init__(self, dbox):
+        self.dbox = dbox
+        self.stack_name_re = re.compile(r"^(?:localhost/)?dbox__(?P<stack>{self.dbox.stack_name})__(?P<distro>.+):(?P<version>.+)$".format(**locals()))
+
+    def images(self):
+        """
+        Return [(stack, base_image_name, base_image_version)]
+        for all existing images matching following pattern:
+        [localhost/]dbox__<stack>__<base_image_name>:<base_image_version>
+        """
+        cmd = ["podman", "images", "--format=json"]
+        data = subprocess.check_output(cmd, encoding="utf-8")
+        images = json.loads(data)
+
+        names = set()
+        for image in images:
+            names.update(image["names"] or [])
+
+        result = set()
+        for name in names:
+            match = self.stack_name_re.match(name)
+            if not match:
+                continue
+            result.add(match.groups())
+
+        return sorted(result)
+
+    def run(self, base_image_name, base_image_version, command):
+        image = self.get_image(base_image_name, base_image_version)
+        cmd = ["podman", "run"]
+        cmd += self._get_volumes(base_image_name, base_image_version)
+        cmd += ["--workdir", "/root/dbox"]
+        cmd += ["-it", "localhost/{image}".format(**locals())]
+        cmd += command
+        return subprocess.run(cmd, check=True)
+
+    def build(self, base_image_name, base_image_version, no_cache=False):
+        image = self.get_image(base_image_name, base_image_version)
+        cmd = ["podman", "build"]
+        cmd += self._get_volumes(base_image_name, base_image_version)
+        if no_cache:
+            cmd += ["--no-cache"]
+        cmd += ["--tag", image]
+        # read Containerfile from stdin
+        cmd += ["-f", "-"]
+
+        cmd_upgrade_all_packages = self.dbox._get_distro_section(UPGRADE_ALL_PACKAGES)
+        cmd_install_dbox_dependencies = self.dbox._get_distro_section(INSTALL_DBOX_DEPENDENCIES)
+        cmd_install_user_packages = "echo ok"
+        containerfile = \
+"""
+FROM {base_image_name}:{base_image_version}
+
+# upgrade all packages first because there's a chance that such layer exists already
+RUN {cmd_upgrade_all_packages}
+
+RUN echo "keepcache=1" >> /etc/dnf/dnf.conf && \
+    echo "install_weak_deps=0" >> /etc/dnf/dnf.conf && \
+    echo "%_minimize_writes 1" > /usr/lib/rpm/macros.d/macros.minimize_writes
+
+# install user's favorite packages
+RUN {cmd_install_user_packages}
+
+# container identification
+ENV DBOX_CONTAINER=1
+ENV DBOX_STACK={self.dbox.stack_name}
+ENV DBOX_BASE_IMAGE_NAME={base_image_name}
+ENV DBOX_BASE_IMAGE_VERSION={base_image_version}
+
+# install dbox dependencies and default runtime
+RUN {cmd_install_dbox_dependencies}
+
+RUN wget -q https://raw.githubusercontent.com/rpm-software-management/dnf-plugins-core/a12205db1467cea22361a5618993fdee86d871d8/plugins/builddep.py -O $(rpm -q python3-dnf-plugins-core -l | grep 'builddep.py$')
+
+# install build dependencies of stack and all its projects
+RUN cd /root/dbox && dbox builddeps '*' --stack
+""".format(**locals())
+        return subprocess.run(cmd, input=containerfile, encoding="utf-8", check=True)
+
+    def get_image(self, base_image_name, base_image_version):
+        return "dbox__{self.dbox.stack_name}__{base_image_name}:{base_image_version}".format(**locals())
+
+    def _get_volumes(self, image_name, image_version):
+        cache_distrodir = os.path.join(CACHE_DIR, image_name.strip("/"), image_version.strip("/"))
+        cache_dnf = os.path.join(cache_distrodir, "dnf")
+        cache_ccache = os.path.join(cache_distrodir, "ccache")
+        cache_gitc = os.path.join(CACHE_DIR, "gitc")
+        for i in (CACHE_DIR, cache_distrodir, cache_dnf, cache_ccache, cache_gitc):
+            mkdirs(i)
+
+        result = []
+
+        # dbox topdir, where the stack projects are cloned
+        result += ["--volume", "{self.dbox.topdir}:/root/dbox:rw,Z".format(**locals())]
+
+        # shared DNF cache (per base_image)
+        result += ["--volume", "{cache_dnf}:/var/cache/dnf:rw,Z".format(**locals())]
+
+        # shared CCACHE cache (per base_image)
+        result += ["--volume", "{cache_ccache}:/root/.ccache:rw,Z".format(**locals())]
+
+        # shared gitc cache
+        result += ["--volume", "{cache_gitc}:/root/.cache/gitc:rw,Z".format(**locals())]
+
+        # user's .bash_profile
+        bash_profile_path = os.path.expanduser("~/.bash_profile")
+        if os.path.isfile(bash_profile_path):
+            result += ["--volume", "{bash_profile_path}:/root/.bash_profile:ro,Z".format(**locals())]
+
+        # user's .bashrc
+        bashrc_path = os.path.expanduser("~/.bashrc")
+        if os.path.isfile(bashrc_path):
+            result += ["--volume", "{bashrc_path}:/root/.bashrc:ro,Z".format(**locals())]
+
+        # .bash_history - a different file for each container
+        bash_history_path = os.path.join(cache_distrodir, "bash_history_{self.dbox.stack_name}".format(**locals()))
+        if not os.path.isfile(bash_history_path):
+            open(bash_history_path, "a")
+        result += ["--volume", "{bash_history_path}:/root/.bash_history:rw,Z".format(**locals())]
+
+        # user's .gitconfig
+        gitconfig_path = os.path.expanduser("~/.gitconfig")
+        if os.path.isfile(gitconfig_path):
+            result += ["--volume", "{gitconfig_path}:/etc/gitconfig:ro,Z".format(**locals())]
+
+        # user's .vimrc
+        vimrc_path = os.path.expanduser("~/.vimrc")
+        if os.path.isfile(vimrc_path):
+            result += ["--volume", "{vimrc_path}:/root/.vimrc:ro,Z".format(**locals())]
+
+        # inject gitc into the container
+        gitc_path = shutil.which("gitc")
+        if gitc_path and os.path.isfile(gitc_path):
+            result += ["--volume", "{gitc_path}:/usr/bin/gitc:ro,Z".format(**locals())]
+
+        # inject dbox into the container
+        dbox_path = os.path.abspath(sys.argv[0])
+        result += ["--volume", "{dbox_path}:/usr/bin/dbox:ro,Z".format(**locals())]
+
+        return result
+
+
+class Table:
+    def __init__(self, columns):
+        self.columns = columns
+        self.rows = []
+
+    def add_row(self, row):
+        assert len(row) == len(self.columns)
+        self.rows.append(row)
+
+    def print(self):
+        widths = [len(i) for i in self.columns]
+        for row in self.rows:
+            for num, column in enumerate(row):
+                widths[num] = max(widths[num], len(column))
+
+        for row in [self.columns] + self.rows:
+            for num, column in enumerate(row):
+                if num < len(self.columns) - 1:
+                    width = widths[num]
+                    column = column.ljust(width + 1, " ")
+                print(column, end="")
+            print()
+
+
+class Stack:
+    CONFIG_DIRS = [
+        os.path.join(CONFIG_DIR, "stacks"),
+        "/usr/local/share/dbox/stacks",
+        "/usr/share/dbox/stacks",
+    ]
+
+    @classmethod
+    def clone(cls, url):
+        if "://" not in url:
+            url = "file://" + url
+        response = urllib.request.urlopen(url)
+
+        # determine stack name from the downloaded config
+        stack_name = None
+        response_data = response.read()
+        configs = yaml.load_all(response_data, Loader=yaml.SafeLoader)
+        for config in configs:
+            if config.get("document", None) == "dbox-stack":
+                stack_name = config["name"]
+                break
+
+        if not stack_name:
+            raise RuntimeError("Could not determine stack name from: {url}".format(**locals()))
+
+        # write to user's config dir
+        config_dir = cls.CONFIG_DIRS[0]
+        mkdirs(config_dir)
+
+        # store the yaml on disk
+        path = os.path.join(config_dir, "{stack_name}.dbox.yaml".format(**locals()))
+        open(path, "wb").write(response_data)
+
+        # store the url on disk
+        path = os.path.join(config_dir, "{stack_name}.dbox.url".format(**locals()))
+        open(path, "w").write(url)
+
+        return cls(stack_name)
+
+    @classmethod
+    def update(cls, name):
+        path = os.path.join(cls.CONFIG_DIRS[0], "{}.url".format(name))
+        url = open(path, "r").read().strip()
+        return cls.register(url)
+
+    @classmethod
+    def list(cls):
+        names = set()
+        for config_dir in cls.CONFIG_DIRS:
+            if not os.path.isdir(config_dir):
+                continue
+            for fn in os.listdir(config_dir):
+                if not fn.endswith(".dbox.yaml"):
+                    continue
+                names.add(fn[:-10])
+
+        result = []
+        for name in sorted(names):
+            result.append(cls(name))
+        return result
+
+    def __init__(self, name):
+        self.name = name
+        self.config_path = None
+        self.url_config_path = None
+
+        for config_dir in self.CONFIG_DIRS:
+            config_path = os.path.join(config_dir, "{self.name}.dbox.yaml".format(**locals()))
+            if os.path.exists(config_path):
+                self.config_path = config_path
+
+            url_config_path = os.path.join(config_dir, "{self.name}.dbox.url".format(**locals()))
+            if os.path.exists(url_config_path):
+                self.url_config_path = url_config_path
+
+            if self.config_path:
+                break
+
+    def get_url(self):
+        return open(self.url_config_path, "r").read().strip()
+
+    def init(self):
+        stack_dir = os.path.abspath(".dbox")
+        if os.path.exists(stack_dir):
+            raise RuntimeError("Could not init stack. Directory aready exists: {stack_dir}".format(**locals()))
+        mkdirs(stack_dir)
+        stack_config = os.path.join(stack_dir, "stack.dbox.yaml")
+        print("Initialized stack '{self.name}' in the working directory".format(**locals()))
+        dbox = os.path.basename(sys.argv[0])
+        print("Get more details: {dbox} info".format(**locals()))
+        shutil.copy(self.config_path, stack_config)
+
+
+class DBox:
+    def __init__(self):
+        self.os_release = OSRelease()
+        self.topdir = self._find_topdir(os.getcwd())
+        self.configdir = os.path.join(self.topdir, ".dbox")
+        self.stack, self.projects = self._load_config()
+        self.podman = Podman(self)
+
+    def _find_topdir(self, path):
+        if os.path.exists(os.path.join(path, ".dbox")):
+            return path
+        if path == "/":
+            raise RuntimeError("Unable to find .dbox directory")
+        return self._find_topdir(os.path.dirname(path))
+
+    def _load_config(self):
+        stack = None
+        projects = []
+        path = os.path.join(self.configdir, "stack.dbox.yaml")
+        configs = yaml.load_all(open(path, "r"), Loader=yaml.SafeLoader)
+        for config in configs:
+            if config["document"] == "dbox-stack":
+                stack = config
+            elif config["document"] == "dbox-project":
+                projects.append(config)
+            else:
+                raise RuntimeError("Unknown yaml document: {document}".format(**config))
+
+            # ensure that stack/project always has paths
+            if "paths" not in config or not config["paths"]:
+                config["paths"] = {}
+
+        return stack, projects
+
+    def _get_distro_section(self, data):
+        if self.os_release.distro_name_version in data:
+            return data[self.os_release.distro_name_version]
+        if self.os_release.distro_name in data:
+            return data[self.os_release.distro_name]
+        return data["default"]
+
+    def _get_project_workdir(self, project, workdir):
+        if DBOX_CONTAINER:
+            return os.path.join(self.topdir, project["name"], workdir, DBOX_BASE_IMAGE_NAME + "-" + DBOX_BASE_IMAGE_VERSION)
+        return os.path.join(self.topdir, project["name"], workdir, "bare-metal")
+
+    def __iter__(self):
+        environ = {}
+
+        # gather keys for all paths from configs
+        all_paths = set()
+        for project in self.projects:
+            all_paths.update(project["paths"])
+        all_paths.update(PATHS)
+
+        # store values from env
+        for key in all_paths:
+            self._update_environ(environ, key, os.environ.get(key))
+
+        for project in self.projects:
+            project_dir = os.path.join(self.topdir, project["name"])
+            is_available = os.path.exists(project_dir)
+            environ["DESTDIR"] = self._get_project_workdir(project, "_install")
+
+            yield (is_available, project, environ)
+
+            # append default path tweaks to environ
+            for key, paths in PATHS.items():
+                for path in reversed(paths):
+                    path = os.path.join(self._get_project_workdir(project, "_install"), path.strip("/"))
+                    self._update_environ(environ, key, path)
+
+            # append new paths to environ
+            for key, paths in project["paths"].items():
+                for path in reversed(paths):
+                    path = os.path.join(self._get_project_workdir(project, "_install"), path.strip("/"))
+                    self._update_environ(environ, key, path)
+
+        # finally, return only the environ after processing the last config
+        environ.pop("DESTDIR", None)
+        yield (False, None, environ)
+
+    def _update_environ(self, environ, key, *values):
+        parts = []
+        if key in environ:
+            parts.append(environ.get(key))
+        for value in values[::-1]:
+            if not value:
+                continue
+            parts.insert(0, value)
+        parts = [i.strip() for i in parts if i.strip()]
+        if key.startswith("CMAKE_"):
+            environ[key] = ";".join(parts)
+        else:
+            environ[key] = ":".join(parts)
+
+    @property
+    def stack_name(self):
+        return self.stack["name"]
+
+    def info(self):
+        print("STACK: {self.stack_name}".format(**locals()))
+        print("TOP DIRECTORY: {self.topdir}".format(**locals()))
+
+        print()
+        table = Table(columns=["PROJECT", "CLONED"])
+        for is_available, project, environ in self:
+            if project is None:
+                continue
+            table.add_row([project["name"], "yes" if is_available else "no"])
+        table.print()
+
+        # do not query podman from inside a container
+        if DBOX_CONTAINER:
+            return
+
+        print()
+        table = Table(columns=["ENVIRONMENT", "IMAGE"])
+        for stack, base_image_name, base_image_version in self.podman.images():
+            base_image = "{base_image_name}:{base_image_version}".format(**locals())
+            image = self.podman.get_image(base_image_name, base_image_version)
+            table.add_row([base_image, image])
+        table.print()
+
+    def shell(self):
+        print("Entering dbox shell for stack '{self.stack_name}'".format(**locals()))
+        _, _, environ = list(self)[-1]
+        for key, values in sorted(environ.items()):
+            values = set([re.sub("^.*/_install/bare-metal", "", i) for i in values.split(":")])
+            values = sorted(values)
+        env = os.environ.copy()
+        env.update(environ)
+        cmd = ["/usr/bin/bash", "-l"]
+        subprocess.run(cmd, env=env, check=True)
+        print("Leaving dbox shell for stack '{self.stack_name}'".format(**locals()))
+
+    def create(self, base_image=None, no_cache=False):
+        """
+        Specify a base image of environment to create.
+        If not specified, it's derived from /etc/os-release
+        """
+        if base_image:
+            base_image_name, base_image_version = base_image.rsplit(":", 1)
+        else:
+            # guess base_image from /etc/os-release values
+            base_image_name = self.os_release.distro_name
+            base_image_version = self.os_release.distro_version
+            base_image = "{base_image_name}:{base_image_version}".format(**locals())
+
+        print("Creating dbox environment '{base_image}' for stack '{self.stack_name}'".format(**locals()))
+        self.podman.build(base_image_name, base_image_version, no_cache=no_cache)
+
+        image = self.podman.get_image(base_image_name, base_image_version)
+        dbox = os.path.basename(sys.argv[0])
+        print("Created dbox environment '{base_image}' for stack '{self.stack_name}'".format(**locals()))
+        print("Image: {image}".format(**locals()))
+        print("Enter with: {dbox} enter {base_image}".format(**locals()))
+
+    def enter(self, base_image=None):
+        """
+        Specify a base image of environment to enter.
+        If not specified, it's derived from /etc/os-release
+        """
+
+        if base_image:
+            base_image_name, base_image_version = base_image.rsplit(":", 1)
+        else:
+            # guess base_image from /etc/os-release values
+            base_image_name = self.os_release.distro_name
+            base_image_version = self.os_release.distro_version
+            base_image = "{base_image_name}:{base_image_version}".format(**locals())
+
+        print("Entering dbox environment '{base_image}' for stack '{self.stack_name}'".format(**locals()))
+        cmd = ["dbox", "shell"]
+        proc = self.podman.run(base_image_name, base_image_version, cmd)
+        if proc.returncode != 0:
+            raise RuntimeError("Unable to enter an environment. Have you executed `dbox create {base_image_name}:{base_image_version}` before?".format(**locals()))
+        print("Leaving dbox environment '{base_image}' for stack '{self.stack_name}'".format(**locals()))
+
+    def clone(self, pattern):
+        for is_available, project, environ in self:
+            if not project:
+                continue
+
+            if not fnmatch.fnmatch(project["name"], pattern):
+                continue
+
+            if "clone" not in project:
+                continue
+
+            print("Cloning project '{name}'...".format(**project))
+            subprocess.run(project["clone"], cwd=self.topdir, shell=True, check=True)
+
+    def builddeps(self, pattern, stack=False):
+        commands = []
+        commands.append("set -x")
+
+        if stack:
+            if "builddeps" in self.stack:
+                commands.append(self._get_distro_section(self.stack["builddeps"]))
+
+        for is_available, project, environ in self:
+            if not project:
+                continue
+
+            if not fnmatch.fnmatch(project["name"], pattern):
+                continue
+
+            if "builddeps" in project:
+                commands.append(self._get_distro_section(project["builddeps"]))
+
+        cmd = " && ".join(commands)
+        subprocess.run(cmd, cwd=self.topdir, env=environ, shell=True, check=True)
+
+    def build(self, pattern):
+        for is_available, project, environ in self:
+            if not is_available:
+                continue
+
+            if not project:
+                continue
+
+            if not fnmatch.fnmatch(project["name"], pattern):
+                continue
+
+            print("Building project '{name}'...".format(**project))
+
+            builddir = self._get_project_workdir(project, "_build")
+            mkdirs(builddir)
+
+            installdir = self._get_project_workdir(project, "_install")
+            mkdirs(installdir)
+
+            if "configure" in project:
+                subprocess.run(project["configure"], cwd=builddir, env=environ, shell=True, check=True)
+
+            if "build" in project:
+                subprocess.run(project["build"], cwd=builddir, env=environ, shell=True, check=True)
+
+            if "install" in project:
+                subprocess.run(project["install"], cwd=builddir, env=environ, shell=True, check=True)
+
+            if "fixup" in project:
+                subprocess.run(project["fixup"], cwd=installdir, env=environ, shell=True, check=True)
+
+            if "unittest" in project:
+                subprocess.run(project["unittest"], cwd=builddir, env=environ, shell=True, check=True)
+
+    def test(self, pattern, test_type):
+        test_type = test_type or "wip"
+        for is_available, project, environ in self:
+            if not is_available:
+                continue
+
+            if not project:
+                continue
+
+            if not fnmatch.fnmatch(project["name"], pattern):
+                continue
+
+            builddir = self._get_project_workdir(project, "_build")
+            mkdirs(builddir)
+
+            print("Running tests for project '{name}'...".format(**project))
+
+            if test_type == "all":
+                if "test-all" in project:
+                    subprocess.run(project["test-all"], cwd=builddir, env=environ, shell=True, check=True)
+            elif test_type == "smoke":
+                if "test-smoke" in project:
+                    subprocess.run(project["test-smoke"], cwd=builddir, env=environ, shell=True, check=True)
+            elif test_type == "wip":
+                if "test-wip" in project:
+                    subprocess.run(project["test-wip"], cwd=builddir, env=environ, shell=True, check=True)
+            else:
+                raise RuntimeError("Unknown test type: {test_type}".format(**locals()))
+
+
+class Formatter(argparse.HelpFormatter):
+
+    def _format_action(self, action):
+        if isinstance(action, argparse._SubParsersAction):
+            parts = []
+            for i in action._get_subactions():
+                parts.append("%*s%-21s %s" % (self._current_indent, "", i.metavar, i.help))
+            return "\n".join(parts)
+        return super(Formatter, self)._format_action(action)
+
+
+def list_projects(available=True, unavailable=True):
+    dbox = DBox()
+    result = []
+    for is_available, project, environ in dbox:
+        if project is None:
+            continue
+        if is_available and not available:
+            continue
+        if not is_available and not unavailable:
+            continue
+        result.append(project["name"])
+    return sorted(result)
+
+
+def completer_available_projects(prefix, parsed_args, **kwargs):
+    return list_projects(available=True, unavailable=False)
+
+
+def completer_unavailable_projects(prefix, parsed_args, **kwargs):
+    return list_projects(available=False, unavailable=True)
+
+
+def completer_all_projects(prefix, parsed_args, **kwargs):
+    return list_projects(available=True, unavailable=True)
+
+
+def completer_list_environments(prefix, parsed_args, **kwargs):
+    dbox = DBox()
+    result = []
+    for stack, base_image_name, base_image_version in dbox.podman.images():
+        base_image = "{base_image_name}:{base_image_version}".format(**locals())
+        result.append(base_image)
+    return sorted(result)
+
+
+def completer_list_stacks(prefix, parsed_args, **kwargs):
+    return sorted([stack.name for stack in Stack.list()])
+
+
+def get_parser():
+    parser = argparse.ArgumentParser(
+        usage="%(prog)s <command> [opts] [args]",
+        description="DBox is a tool for developing, building, testing and debugging software in unprivileged Podman containers.",
+        formatter_class=Formatter,
+    )
+    subparsers = parser.add_subparsers(
+        title="commands",
+        dest="command",
+    )
+
+    # stack-clone
+    register_parser = subparsers.add_parser(
+        "stack-clone",
+        help="Clone remote stack configuration to local host",
+    )
+    register_parser.add_argument(
+        "url",
+        help="URL of a yaml file with stack configuration",
+    )
+
+    # stack-pull
+    update_parser = subparsers.add_parser(
+        "stack-pull",
+        help="Pull new stack configuration of already cloned stack",
+    )
+    update_parser.add_argument(
+        "stack",
+        help="Stack name",
+    )
+
+    # stack-ls
+    update_parser = subparsers.add_parser(
+        "stack-ls",
+        help="List stack configurations on local host",
+    )
+
+    # stack-init
+    init_parser = subparsers.add_parser(
+        "stack-init",
+        help="Init a cloned stack in the working directory",
+    )
+    init_parser.add_argument(
+        "stack",
+        help="Stack name",
+    ).completer = completer_list_stacks
+
+    # info
+    info_parser = subparsers.add_parser(
+        "info",
+        help="Print information about the current stack incl. list of projects",
+    )
+
+    # shell
+    shell_parser = subparsers.add_parser(
+        "shell",
+        help="Enter a debug shell with tweaked env variables",
+    )
+
+    # create
+    if not DBOX_CONTAINER:
+        create_parser = subparsers.add_parser(
+            "create",
+            help="Create a container for dbox",
+        )
+        create_parser.add_argument(
+            "base_image",
+            nargs="?",
+            help="Specify a base image tag, e.g. fedora:32. If not specified, it is guessed from /etc/os-release values.",
+        )
+        create_parser.add_argument(
+            "--no-cache",
+            action="store_true",
+            help="Do not use existing cached images for the container build.",
+        )
+
+    # enter
+    if not DBOX_CONTAINER:
+        enter_parser = subparsers.add_parser(
+            "enter",
+            help="Enter a container for interactive use",
+        )
+        enter_parser.add_argument(
+            "base_image",
+            nargs="?",
+            help="Specify a base image tag, e.g. fedora:32. If not specified, it is guessed from /etc/os-release values.",
+        ).completer = completer_list_environments
+
+    # clone
+    clone_parser = subparsers.add_parser(
+        "clone",
+        help="Clone a project from a remote repo",
+    )
+    clone_parser.add_argument(
+        "name",
+        nargs="+",
+    ).completer = completer_unavailable_projects
+
+    # builddeps
+    builddeps_parser = subparsers.add_parser(
+        "builddeps",
+        help="Install build dependencis of project(s)",
+    )
+    builddeps_parser.add_argument(
+        "name",
+        nargs="*",
+    ).completer = completer_available_projects
+    builddeps_parser.add_argument(
+        "--stack",
+        action="store_true",
+        help="Install also stack build dependencies",
+    )
+
+    # build
+    build_parser = subparsers.add_parser(
+        "build",
+        help="Build project(s), run their unittests",
+    )
+    build_parser.add_argument(
+        "name",
+        nargs="*",
+    ).completer = completer_available_projects
+
+    # test
+    test_parser = subparsers.add_parser(
+        "test",
+        help="Run tests",
+    )
+    test_parser.add_argument(
+        "name",
+        nargs="*",
+    ).completer = completer_available_projects
+    test_parser.add_argument(
+        "--wip",
+        action="store_const",
+        dest="test_type",
+        const="wip",
+        help="Run only \"work in progress\" tests",
+    )
+    test_parser.add_argument(
+        "--smoke",
+        action="store_const",
+        dest="test_type",
+        const="smoke",
+        help="Run only \"smoke\" tests",
+    )
+
+    # clean
+    clean_parser = subparsers.add_parser(
+        "clean",
+        help="Remove project(s) _build and _install directories",
+    )
+    clean_parser.add_argument(
+        "name",
+        nargs="+",
+    ).completer = completer_available_projects
+
+    return parser
+
+
+def main():
+    parser = get_parser()
+    if USE_ARGCOMPLETE:
+        argcomplete.autocomplete(parser)
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.error("Please specify a command")
+
+    if args.command == "stack-clone":
+        stack = Stack.clone(args.url)
+        print("Cloned stack: {0}".format(stack.name))
+    elif args.command == "stack-ls":
+        table = Table(columns=["STACK", "URL"])
+        for stack in Stack.list():
+            table.add_row([stack.name, stack.get_url()])
+        table.print()
+    elif args.command == "stack-pull":
+        try:
+            stack = Stack.update(args.stack)
+            stack_url = stack.get_url()
+            print("Stack '{stack.name}' updated from '{stack_url}".format(**locals()))
+        except Exception as ex:
+            raise RuntimeError("Could not update stack '{stack.name}' from '{stack_url}\nError: {ex}".format(**locals()))
+    elif args.command == "stack-init":
+        stack = Stack(args.stack)
+        stack.init()
+    elif args.command == "info":
+        dbox = DBox()
+        dbox.info()
+    elif args.command == "shell":
+        dbox = DBox()
+        dbox.shell()
+    elif args.command == "create":
+        dbox = DBox()
+        dbox.create(args.base_image, no_cache=args.no_cache)
+    elif args.command == "enter":
+        dbox = DBox()
+        dbox.enter(args.base_image)
+    elif args.command == "clone":
+        dbox = DBox()
+        for name in args.name:
+            dbox.clone(name)
+    elif args.command == "builddeps":
+        dbox = DBox()
+        for name in args.name:
+            dbox.builddeps(name, stack=args.stack)
+    elif args.command == "build":
+        dbox = DBox()
+        for name in args.name:
+            dbox.build(name)
+    elif args.command == "test":
+        dbox = DBox()
+        for name in args.name:
+            dbox.test(name, test_type=args.test_type)
+    else:
+        raise RuntimeError("Command not implemented: %s" % args.command)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except RuntimeError as ex:
+        print("Error:", ex, file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)

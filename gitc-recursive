@@ -1,0 +1,219 @@
+#!/usr/bin/python3
+
+
+import argparse
+import os
+import re
+import subprocess
+
+import github
+
+
+# config directory according to XDG
+XDG_CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+GITHUB_TOKEN_FILE = os.path.join(XDG_CONFIG_HOME, "github-token")
+
+
+class GitHub:
+    RE_URL_HTTPS = re.compile(r"^https://github.com/(?P<org>.+)/(?P<repo>.+)(?:.git)?$")
+    RE_URL_SSH = re.compile(r"^.*@github.com:(?P<org>.+)/(?P<repo>.+)(?:.git)?$")
+    RE_PR_URL = re.compile(r"^https://github.com/(?P<org>.+)/(?P<repo>.+)/pull/(?P<pull>\d+)(?:#.*)?$")
+    RE_PR_ID = re.compile(r"^(?P<org>.+)/(?P<repo>.+)#(?P<pull>\d+)$")
+
+    def __init__(self, *args, **kwargs):
+        if not args:
+            # no access token specified, read one from ~/.config/github-token
+            token = self._get_token()
+            if token:
+                args = [token]
+
+        self.gh = github.Github(*args, **kwargs)
+
+    def _get_token(self):
+        try:
+            return open(GITHUB_TOKEN_FILE, "r").read().strip()
+        except FileNotFoundError:
+            pass
+
+    def get_pr(self, pr_id):
+        """
+        Return pull request object for given pr_id.
+
+        pr_id can be:
+          * ID: <org>/<repo>#<num>
+          * URL: https://github.com/<org>/<repo>/pull/<num>
+        """
+        pr_id_tuple = self.get_pr_id_tuple(pr_id)
+        repo = self.gh.get_repo("%s/%s" % (pr_id_tuple[0], pr_id_tuple[1]))
+        pull = repo.get_pull(pr_id_tuple[2])
+        return pull
+
+    def get_pr_dependencies(self, pr_id_list, recursive=False, seen=None):
+        seen = seen or set()
+        deps = set()
+
+        for pr_id in pr_id_list:
+            pr_id_tuple = self.get_pr_id_tuple(pr_id)
+
+            if pr_id_tuple in seen:
+                continue
+            seen.add(pr_id_tuple)
+
+            pull = self.get_pr(pr_id)
+
+            # use deps from pull request description
+            new_deps = self._get_requires(pull.body)
+            if new_deps:
+                deps.update(new_deps)
+                continue
+
+            # use deps from the last comment with deps
+            for comment in reversed(list(pull.get_issue_comments())):
+                new_deps = self._get_requires(comment.body)
+                if new_deps:
+                    deps.update(new_deps)
+                    continue
+
+        seen.update(deps)
+
+        if deps and recursive:
+            new_deps = self.get_pr_dependencies(deps, recursive=True, seen=seen)
+            deps.update(new_deps)
+
+        return deps
+
+    def _get_requires(self, text):
+        """
+        Parse pull request requires from the text.
+
+        Lines starting with following prefix are considered:
+        * Require:
+        * Requires:
+        * Test:
+        * Tests:
+        """
+        result = set()
+        for line in text.splitlines():
+            if not line.startswith(("Require:", "Requires:", "Test:", "Tests:")):
+                continue
+            pr_id = line.split(":", 1)[1].strip()
+            try:
+                pr_data = self.get_pr_id_tuple(pr_id)
+            except ValueError:
+                continue
+            result.add(pr_data)
+        return result
+
+    def get_pr_id_tuple(self, text):
+        """
+        Return (org, repo, pull) tuple parsed from given text.
+        """
+        if isinstance(text, tuple):
+            return text
+
+        try:
+            return self._parse_pr_url(text)
+        except ValueError:
+            pass
+
+        try:
+            return self._parse_pr_id(text)
+        except ValueError:
+            pass
+
+        raise ValueError("Couldn't parse GitHub pull request ID or URL: %s" % text)
+
+    def _parse_pr_url(self, text):
+        """
+        Return (org, repo, pull) tuple parsed from given URL.
+        """
+        match = self.RE_PR_URL.match(text)
+        if not match:
+            raise ValueError("Couldn't parse GitHub pull request URL: %s" % text)
+        result = list(match.groups())
+        result[2] = int(result[2])
+        return tuple(result)
+
+    def _parse_pr_id(self, text):
+        """
+        Return (org, repo, pull) tuple parsed from given pull request ID.
+        """
+        match = self.RE_PR_ID.match(text)
+        if not match:
+            raise ValueError("Couldn't parse GitHub pull request ID: %s" % text)
+        result = list(match.groups())
+        result[2] = int(result[2])
+        return tuple(result)
+
+    def _parse_url_https(self, text):
+        """
+        Return (org, repo) tuple parsed from GitHub https:// URL.
+        """
+        match = self.RE_URL_HTTPS.match(text)
+        if not match:
+            raise ValueError("Couldn't parse GitHub HTTPS URL: %s" % text)
+        result = list(match.groups())[:2]
+        return tuple(result)
+
+    def _parse_url_ssh(self, text):
+        """
+        Return (org, repo) tuple parsed from GitHub ssh:// URL.
+        """
+        match = self.RE_URL_SSH.match(text)
+        if not match:
+            raise ValueError("Couldn't parse GitHub SSH URL: %s" % text)
+        result = list(match.groups())[:2]
+        return tuple(result)
+
+
+def get_parser():
+    parser = argparse.ArgumentParser(
+        usage="%(prog)s <pull-request-url> ...",
+        description=
+            "Clone a GitHub pull request including it's dependencies.\n"
+            "\n"
+            "Add following lines to pull request description or comments.\n"
+            " * Requires: <pull-request-url>\n"
+            " * Tests: <pull-request-url>\n"
+            "\n"
+            "If such patterns are found in description, comments are ignored,\n"
+            "patterns from the latest comment are used otherwise.\n"
+            "\n"
+            "A token stored in ~/.config/github-token is required for authentication.\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    parser.add_argument(
+        "pull_request_url_list",
+        metavar="pull-request-url",
+        nargs="+",
+        help="",
+    )
+
+    return parser
+
+
+def main():
+    parser = get_parser()
+    args = parser.parse_args()
+
+    gh = GitHub()
+    pulls = set()
+
+    for i in args.pull_request_url_list:
+        pulls.add(gh.get_pr_id_tuple(i))
+
+    pulls.update(gh.get_pr_dependencies(args.pull_request_url_list, recursive=True))
+
+    urls = []
+    for org, repo, pull in sorted(pulls):
+        url = "https://github.com/%s/%s/pull/%d" % (org, repo, pull)
+        urls.append(url)
+
+    for url in urls:
+        cmd = ["gitc", url]
+        subprocess.call(cmd)
+
+
+if __name__ == "__main__":
+    main()

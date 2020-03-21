@@ -1,0 +1,6 @@
+MANIFEST
+__pycache__
+build/*
+dist/*
+*.src.rpm
+*.tar.gz
