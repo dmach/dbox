@@ -15,6 +15,12 @@ It's DNF-stack-in-a-Box, because DBox was originally written
 to simplify development of the [DNF](https://github.com/rpm-software-management/dnf) stack.
 
 
+Install
+=======
+
+    pip3 install --user git+https://github.com/dmach/dbox.git
+
+
 Usage
 =====
 
@@ -23,30 +29,21 @@ Clone stack configuration to the local host:
 
     $ dbox stack-clone https://raw.githubusercontent.com/dmach/dbox/stacks/dnf-4.dbox.yaml
     Cloned stack: dnf-4
+    Initialize with: dbox stack-init dnf-4
 
 
-Initialize a dbox directory:
+Initialize stack:
 
     $ mkdir <feature>
     $ cd <feature>
-
     $ dbox stack-init dnf-4
-    Initialized stack 'dnf-4' in the working directory
-    Get more details: dbox info
 
 
 Create and enter an evironment:
 
     # build a podman image for the current stack based on the specified base image
-    $ dbox create fedora:latest
-    ...
-    Created dbox environment 'fedora:latest' for stack 'dnf-4'
-    Image: dbox__dnf-4__fedora:latest
-    Enter with: dbox enter fedora:latest
-
+    $ dbox create fedora:latest [--no-cache]
     $ dbox enter fedora:latest
-    Entering dbox environment 'fedora:latest' for stack 'dnf-4'
-    Entering dbox shell for stack 'dnf-4'
 
     # check that we are really in a container
     [root@0aabbccddeef dbox]$ pwd
@@ -95,7 +92,7 @@ gitc-recursive
 --------------
 
 The `gitc-recursive` program calls `gitc` recursively and inspects related
-GitHub pull requests for 'Requires:' or 'Tests:' references and clones
+GitHub pull requests for `Requires:` or `Tests:` references and clones
 all of them to the working directory. The git repositories are switched
 according to the pull request references.
 
