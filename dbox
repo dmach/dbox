@@ -22,6 +22,9 @@ except ImportError:
     USE_ARGCOMPLETE = False
 
 
+# dbox executable
+DBOX = os.path.basename(sys.argv[0])
+
 # config directory according to XDG
 XDG_CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
 CONFIG_DIR = os.path.join(XDG_CONFIG_HOME, "dbox")
@@ -55,7 +58,7 @@ PATHS = {
     "LD_LIBRARY_PATH": [PATHS_ENV["LIBDIR"]],
     "LIBRARY_PATH": [PATHS_ENV["LIBDIR"]],
     "PATH": ["/usr/sbin", "/usr/bin"],
-    "PKG_CONFIG_PATH": distutils.sysconfig.get_config_var("LIBPC"),
+    "PKG_CONFIG_PATH": [distutils.sysconfig.get_config_var("LIBPC")],
     "PKG_CONFIG_SYSTEM_INCLUDE_PATH": ["/usr/include"],
     "PYTHONPATH": [PATHS_ENV["PYTHON3_SITEARCH"], PATHS_ENV["PYTHON3_SITELIB"]],
 }
@@ -167,8 +170,23 @@ class Podman:
         # read Containerfile from stdin
         cmd += ["-f", "-"]
 
-        cmd_upgrade_all_packages = self.dbox._get_distro_section(UPGRADE_ALL_PACKAGES)
-        cmd_install_dbox_dependencies = self.dbox._get_distro_section(INSTALL_DBOX_DEPENDENCIES)
+        cmd_upgrade_all_packages = self.dbox._get_distro_section(
+            UPGRADE_ALL_PACKAGES,
+            base_image_name=base_image_name,
+            base_image_version=base_image_version,
+        )
+        cmd_distro_setup = self.dbox._get_distro_section(
+            self.dbox.stack.get("distro_setup", {}),
+            base_image_name=base_image_name,
+            base_image_version=base_image_version,
+        )
+        if not cmd_distro_setup:
+            cmd_distro_setup = "echo 'distro setup not configured'"
+        cmd_install_dbox_dependencies = self.dbox._get_distro_section(
+            INSTALL_DBOX_DEPENDENCIES,
+            base_image_name=base_image_name,
+            base_image_version=base_image_version,
+        )
         cmd_install_user_packages = "echo ok"
         containerfile = \
 """
@@ -180,6 +198,9 @@ RUN {cmd_upgrade_all_packages}
 RUN echo "keepcache=1" >> /etc/dnf/dnf.conf && \
     echo "install_weak_deps=0" >> /etc/dnf/dnf.conf && \
     echo "%_minimize_writes 1" > /usr/lib/rpm/macros.d/macros.minimize_writes
+
+# distro setup - initialize additional repos here
+RUN {cmd_distro_setup}
 
 # install user's favorite packages
 RUN {cmd_install_user_packages}
@@ -330,7 +351,7 @@ class Stack:
     def update(cls, name):
         path = os.path.join(cls.CONFIG_DIRS[0], "{}.url".format(name))
         url = open(path, "r").read().strip()
-        return cls.register(url)
+        return cls.clone(url)
 
     @classmethod
     def list(cls):
@@ -375,8 +396,8 @@ class Stack:
         mkdirs(stack_dir)
         stack_config = os.path.join(stack_dir, "stack.dbox.yaml")
         print("Initialized stack '{self.name}' in the working directory".format(**locals()))
-        dbox = os.path.basename(sys.argv[0])
-        print("Get more details: {dbox} info".format(**locals()))
+        print("Get more details: {dbox} info".format(dbox=DBOX))
+        print("Build environment with: {dbox} create {stack} [base_image:version]".format(dbox=DBOX, stack=self.name))
         shutil.copy(self.config_path, stack_config)
 
 
@@ -414,12 +435,30 @@ class DBox:
 
         return stack, projects
 
-    def _get_distro_section(self, data):
-        if self.os_release.distro_name_version in data:
-            return data[self.os_release.distro_name_version]
-        if self.os_release.distro_name in data:
-            return data[self.os_release.distro_name]
-        return data["default"]
+    def _get_distro_section(self, data, base_image_name=None, base_image_version=None):
+        # if base image is not specified, use ENV variables
+        if not base_image_name:
+            base_image_name = DBOX_BASE_IMAGE_NAME
+        if not base_image_version:
+            base_image_version = DBOX_BASE_IMAGE_VERSION
+
+        # if base image is still not specified, use data from /etc/os-release
+        if not base_image_name:
+            base_image_name = self.os_release.distro_name
+        if not base_image_version:
+            base_image_version = self.os_release.distro_version
+
+        # try full base_image_name:base_image_version first
+        base_image = base_image_name + ":" + base_image_version
+        if base_image in data:
+            return data[base_image]
+
+        # try full base_image_name
+        if base_image_name in data:
+            return data[base_image_name]
+
+        # return content of the "default" section or None if "default" is not present
+        return data.get("default", None)
 
     def _get_project_workdir(self, project, workdir):
         if DBOX_CONTAINER:
@@ -522,7 +561,10 @@ class DBox:
         If not specified, it's derived from /etc/os-release
         """
         if base_image:
-            base_image_name, base_image_version = base_image.rsplit(":", 1)
+            try:
+                base_image_name, base_image_version = base_image.rsplit(":", 1)
+            except ValueError:
+                raise RuntimeError("Base image not in the '<name>:<version>' format: {base_image}".format(base_image=base_image))
         else:
             # guess base_image from /etc/os-release values
             base_image_name = self.os_release.distro_name
@@ -533,10 +575,9 @@ class DBox:
         self.podman.build(base_image_name, base_image_version, no_cache=no_cache)
 
         image = self.podman.get_image(base_image_name, base_image_version)
-        dbox = os.path.basename(sys.argv[0])
-        print("Created dbox environment '{base_image}' for stack '{self.stack_name}'".format(**locals()))
-        print("Image: {image}".format(**locals()))
-        print("Enter with: {dbox} enter {base_image}".format(**locals()))
+        print("Created dbox environment '{base_image}' for stack '{stack}'".format(base_image=base_image, stack=self.stack_name))
+        print("Image: {image}".format(image=image))
+        print("Enter with: {dbox} enter {base_image}".format(dbox=DBOX, base_image=base_image))
 
     def enter(self, base_image=None):
         """
@@ -545,7 +586,10 @@ class DBox:
         """
 
         if base_image:
-            base_image_name, base_image_version = base_image.rsplit(":", 1)
+            try:
+                base_image_name, base_image_version = base_image.rsplit(":", 1)
+            except ValueError:
+                raise RuntimeError("Base image not in the '<name>:<version>' format: {base_image}".format(base_image=base_image))
         else:
             # guess base_image from /etc/os-release values
             base_image_name = self.os_release.distro_name
@@ -737,7 +781,7 @@ def get_parser():
     update_parser.add_argument(
         "stack",
         help="Stack name",
-    )
+    ).completer = completer_list_stacks
 
     # stack-ls
     update_parser = subparsers.add_parser(
@@ -879,7 +923,8 @@ def main():
 
     if args.command == "stack-clone":
         stack = Stack.clone(args.url)
-        print("Cloned stack: {0}".format(stack.name))
+        print("Cloned stack: {stack}".format(stack=stack.name))
+        print("Initialize with: {dbox} stack-init {stack}".format(dbox=DBOX, stack=stack.name))
     elif args.command == "stack-ls":
         table = Table(columns=["STACK", "URL"])
         for stack in Stack.list():
@@ -889,9 +934,9 @@ def main():
         try:
             stack = Stack.update(args.stack)
             stack_url = stack.get_url()
-            print("Stack '{stack.name}' updated from '{stack_url}".format(**locals()))
+            print("Stack '{stack}' updated from '{url}".format(stack=stack.name, url=stack.get_url()))
         except Exception as ex:
-            raise RuntimeError("Could not update stack '{stack.name}' from '{stack_url}\nError: {ex}".format(**locals()))
+            raise RuntimeError("Could not update stack '{stack}' from '{url}\nError: {ex}".format(stack=stack.name, url=stack.get_url(), ex=ex))
     elif args.command == "stack-init":
         stack = Stack(args.stack)
         stack.init()
