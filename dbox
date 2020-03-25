@@ -349,7 +349,7 @@ class Stack:
 
     @classmethod
     def update(cls, name):
-        path = os.path.join(cls.CONFIG_DIRS[0], "{}.url".format(name))
+        path = os.path.join(cls.CONFIG_DIRS[0], "{}.dbox.url".format(name))
         url = open(path, "r").read().strip()
         return cls.clone(url)
 
@@ -386,6 +386,9 @@ class Stack:
             if self.config_path:
                 break
 
+        if not self.config_path:
+            raise RuntimeError("Invalid stack: {stack}".format(stack=self.name))
+
     def get_url(self):
         return open(self.url_config_path, "r").read().strip()
 
@@ -395,10 +398,10 @@ class Stack:
             raise RuntimeError("Could not init stack. Directory aready exists: {stack_dir}".format(**locals()))
         mkdirs(stack_dir)
         stack_config = os.path.join(stack_dir, "stack.dbox.yaml")
+        shutil.copy(self.config_path, stack_config)
         print("Initialized stack '{self.name}' in the working directory".format(**locals()))
         print("Get more details: {dbox} info".format(dbox=DBOX))
-        print("Build environment with: {dbox} create {stack} [base_image:version]".format(dbox=DBOX, stack=self.name))
-        shutil.copy(self.config_path, stack_config)
+        print("Build environment with: {dbox} create [base_image:version]".format(dbox=DBOX))
 
 
 class DBox:
@@ -933,10 +936,9 @@ def main():
     elif args.command == "stack-pull":
         try:
             stack = Stack.update(args.stack)
-            stack_url = stack.get_url()
             print("Stack '{stack}' updated from '{url}".format(stack=stack.name, url=stack.get_url()))
         except Exception as ex:
-            raise RuntimeError("Could not update stack '{stack}' from '{url}\nError: {ex}".format(stack=stack.name, url=stack.get_url(), ex=ex))
+            raise RuntimeError("Could not update stack '{stack}'\nError: {ex}".format(stack=args.stack, ex=ex))
     elif args.command == "stack-init":
         stack = Stack(args.stack)
         stack.init()
