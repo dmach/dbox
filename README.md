@@ -66,11 +66,30 @@ Use the programs immediately after they are built:
     /root/dbox/dnf/_install/fedora-latest/usr/bin/dnf
 
 
-Important
-=========
+Good to know
+============
 
-It is advised to always create a new directory with fresh clones of git projects for each feature and delete it after the work is completed.
-Developing features in multiple branches and switching among them may lead to various issues due to sharing various caches.
+
+How to write patches
+--------------------
+The stack directory is shared among the host and any number of containers.
+The changes propagate back and forth.
+You can use your favorite IDE to write the code on your desktop while running
+`dbox build` inside containers to test if the code works in the target environments.
+
+
+Working with git branches
+-------------------------
+It is advised to always create a new directory with fresh clones of git projects
+for each feature and delete it after the work is completed.
+Developing features in multiple branches and switching among them may lead
+to various issues due to sharing various caches.
+
+
+What if a container becomes unusable after running dbox build
+-------------------------------------------------------------
+Running `dbox build <project>` compiles and installs files under `<project>/_install/<base_image_name>-<base_image_version>/`. These files are immediately used due to tweaked environment paths.
+If they impact the container the way it's no longer usable, it's possible to remove the relevant `_install/<base_image_name>-<base_image_version>/` directory. This can be done from inside the container as well as from the host.
 
 
 Additional Tools
