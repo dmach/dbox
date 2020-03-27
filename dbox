@@ -160,7 +160,7 @@ class Podman:
         cmd += command
         return subprocess.run(cmd, check=True)
 
-    def build(self, base_image_name, base_image_version, no_cache=False):
+    def build(self, base_image_name, base_image_version, no_cache=False, update=False):
         image = self.get_image(base_image_name, base_image_version)
         cmd = ["podman", "build"]
         cmd += self._get_volumes(base_image_name, base_image_version)
@@ -219,6 +219,18 @@ RUN wget -q https://raw.githubusercontent.com/rpm-software-management/dnf-plugin
 # install build dependencies of stack and all its projects
 RUN cd /root/dbox && dbox builddeps '*' --stack
 """.format(**locals())
+
+        containerfile_update = \
+"""
+FROM {image}
+
+# upgrade all packages
+RUN {cmd_upgrade_all_packages}
+""".format(**locals())
+
+        if update:
+            containerfile = containerfile_update
+
         return subprocess.run(cmd, input=containerfile, encoding="utf-8", check=True)
 
     def get_image(self, base_image_name, base_image_version):
@@ -558,7 +570,7 @@ class DBox:
         subprocess.run(cmd, env=env, check=True)
         print("Leaving dbox shell for stack '{self.stack_name}'".format(**locals()))
 
-    def create(self, base_image=None, no_cache=False):
+    def create(self, base_image=None, no_cache=False, update=False):
         """
         Specify a base image of environment to create.
         If not specified, it's derived from /etc/os-release
@@ -575,7 +587,7 @@ class DBox:
             base_image = "{base_image_name}:{base_image_version}".format(**locals())
 
         print("Creating dbox environment '{base_image}' for stack '{self.stack_name}'".format(**locals()))
-        self.podman.build(base_image_name, base_image_version, no_cache=no_cache)
+        self.podman.build(base_image_name, base_image_version, no_cache=no_cache, update=update)
 
         image = self.podman.get_image(base_image_name, base_image_version)
         print("Created dbox environment '{base_image}' for stack '{stack}'".format(base_image=base_image, stack=self.stack_name))
@@ -830,6 +842,11 @@ def get_parser():
             action="store_true",
             help="Do not use existing cached images for the container build.",
         )
+        create_parser.add_argument(
+            "--update",
+            action="store_true",
+            help="Update previously built image.",
+        )
 
     # enter
     if not DBOX_CONTAINER:
@@ -950,7 +967,7 @@ def main():
         dbox.shell()
     elif args.command == "create":
         dbox = DBox()
-        dbox.create(args.base_image, no_cache=args.no_cache)
+        dbox.create(args.base_image, no_cache=args.no_cache, update=args.update)
     elif args.command == "enter":
         dbox = DBox()
         dbox.enter(args.base_image)
