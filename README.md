@@ -18,7 +18,7 @@ to simplify development of the [DNF](https://github.com/rpm-software-management/
 Install
 =======
 
-    pip3 install --user git+https://github.com/dmach/dbox.git
+    $ pip3 install --user git+https://github.com/dmach/dbox.git
 
 
 Usage
