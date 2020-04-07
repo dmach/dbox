@@ -144,7 +144,7 @@ document: dbox-project
 document-version: 1
 name: libdnf
 clone: >-
-    gitc https://github.com/rpm-software-management/libdnf.git
+    gitc --branch=dnf-4-master https://github.com/rpm-software-management/libdnf.git
 builddeps:
     default: >-
         dnf -y --skip-unavailable builddep https://raw.githubusercontent.com/rpm-software-management/libdnf/dnf-4-master/libdnf.spec
