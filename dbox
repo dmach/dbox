@@ -287,10 +287,12 @@ RUN {cmd_upgrade_all_packages}
         # inject gitc into the container
         gitc_path = shutil.which("gitc")
         if gitc_path and os.path.isfile(gitc_path):
+            gitc_path = os.path.realpath(gitc_path)
             result += ["--volume", "{gitc_path}:/usr/bin/gitc:ro,Z".format(**locals())]
 
         # inject dbox into the container
         dbox_path = os.path.abspath(sys.argv[0])
+        dbox_path = os.path.realpath(dbox_path)
         result += ["--volume", "{dbox_path}:/usr/bin/dbox:ro,Z".format(**locals())]
 
         return result
