@@ -151,6 +151,7 @@ builddeps:
 configure: >-
     cmake ../..
     -DPYTHON_DESIRED=3
+    -DCMAKE_INSTALL_PREFIX=/usr/
 build: >-
     make -j4
 install: >-
