@@ -154,6 +154,8 @@ class Podman:
     def run(self, base_image_name, base_image_version, command):
         image = self.get_image(base_image_name, base_image_version)
         cmd = ["podman", "run"]
+        # PTRACE capability is required by lsan (leak sanitizer)
+        cmd += ["--cap-add", "SYS_PTRACE"]
         cmd += self._get_volumes(base_image_name, base_image_version)
         cmd += ["--workdir", "/root/dbox"]
         cmd += ["-it", "localhost/{image}".format(**locals())]
