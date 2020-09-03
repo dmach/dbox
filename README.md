@@ -66,6 +66,16 @@ Use the programs immediately after they are built:
     /root/dbox/dnf/_install/fedora-latest/usr/bin/dnf
 
 
+If the upstream stack configuration changes, pull it with:
+
+    $ dbox stack-pull dnf-4
+
+    # since stack-pull updates only the global config and keeps
+    # the already initialized stacks intact, you may want to update them
+    $ cd <feature>
+    $ dbox stack-init dnf-4 --force
+
+
 Good to know
 ============
 
