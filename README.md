@@ -21,6 +21,12 @@ Install
     $ pip3 install --user git+https://github.com/dmach/dbox.git
 
 
+Upgrade
+=======
+
+    $ pip3 install --user git+https://github.com/dmach/dbox.git --upgrade
+
+
 Usage
 =====
 
