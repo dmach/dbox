@@ -662,7 +662,7 @@ class DBox:
                 commands.append(self._get_distro_section(project["builddeps"]))
 
         cmd = " && ".join(commands)
-        subprocess.run(cmd, cwd=self.topdir, env=environ, shell=True, check=True)
+        subprocess.run(cmd, cwd=self.topdir, shell=True, check=True)
 
     def build(self, pattern):
         for is_available, project, environ in self:
