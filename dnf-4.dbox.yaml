@@ -69,6 +69,7 @@ configure: >-
     meson ../..
     --buildtype=debug
     --prefix=/usr/
+    -Ddeveloper_build=false
     -Dwith_docs=false
 build: >-
     ninja
