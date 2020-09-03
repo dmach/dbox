@@ -50,7 +50,7 @@ configure: >-
         --enable-python \
         --with-crypto=openssl
 build: >-
-    make -j4
+    make -j$(nproc)
 install: >-
     make install
 test: >-
@@ -95,11 +95,11 @@ configure: >-
     -DENABLE_PYTHON=OFF
     -DCMAKE_INSTALL_PREFIX=/usr/
 build: >-
-    ninja-build -j4
+    ninja-build -j$(nproc)
 install: >-
     ninja-build install
 unittest: >-
-    ninja test -j4
+    ninja test -j$(nproc)
 paths:
 ---
 document: dbox-project
@@ -115,7 +115,7 @@ configure: >-
     -DPYTHON_DESIRED=3
     -DCMAKE_INSTALL_PREFIX=/usr/
 build: >-
-    make -j4
+    make -j$(nproc)
 install: >-
     make install
 ---
@@ -136,7 +136,7 @@ configure: >-
     -DCMAKE_C_FLAGS="$(pkg-config -cflags libsolv)"
     -DCMAKE_INSTALL_PREFIX=/usr/
 build: >-
-    make -j4
+    make -j$(nproc)
 install: >-
     make install
 ---
@@ -153,7 +153,7 @@ configure: >-
     -DPYTHON_DESIRED=3
     -DCMAKE_INSTALL_PREFIX=/usr/
 build: >-
-    make -j4
+    make -j$(nproc)
 install: >-
     make install
 unittest: >-
@@ -172,7 +172,7 @@ configure: >-
     -DPYTHON_DESIRED=3
     -DCMAKE_INSTALL_PREFIX=/usr/
 build: >-
-    make -j4
+    make -j$(nproc)
 install: >-
     make install
 unittest: >-
@@ -192,7 +192,7 @@ configure: >-
     -DWITH_MAN=0
     -DCMAKE_INSTALL_PREFIX=/usr/
 build: >-
-    make -j4
+    make -j$(nproc)
 install: >-
     make install
 fixup: >-
@@ -213,7 +213,7 @@ configure: >-
     -DPYTHON_DESIRED=3
     -DCMAKE_INSTALL_PREFIX=/usr/
 build: >-
-    make -j4 && make doc-man
+    make -j$(nproc) && make doc-man
 install: >-
     make install
 paths:
@@ -234,7 +234,7 @@ configure: >-
     -DPYTHON_DESIRED=3
     -DCMAKE_INSTALL_PREFIX=/usr/
 build: >-
-    make -j4 && make doc-man
+    make -j$(nproc) && make doc-man
 install: >-
     make install
 paths:
