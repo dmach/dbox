@@ -406,9 +406,9 @@ class Stack:
     def get_url(self):
         return open(self.url_config_path, "r").read().strip()
 
-    def init(self):
+    def init(self, force=False):
         stack_dir = os.path.abspath(".dbox")
-        if os.path.exists(stack_dir):
+        if not force and os.path.exists(stack_dir):
             raise RuntimeError("Could not init stack. Directory aready exists: {stack_dir}".format(**locals()))
         mkdirs(stack_dir)
         stack_config = os.path.join(stack_dir, "stack.dbox.yaml")
@@ -822,6 +822,11 @@ def get_parser():
         "stack",
         help="Stack name",
     ).completer = completer_list_stacks
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing stack configuration",
+    )
 
     # info
     info_parser = subparsers.add_parser(
@@ -967,7 +972,7 @@ def main():
             raise RuntimeError("Could not update stack '{stack}'\nError: {ex}".format(stack=args.stack, ex=ex))
     elif args.command == "stack-init":
         stack = Stack(args.stack)
-        stack.init()
+        stack.init(args.force)
     elif args.command == "info":
         dbox = DBox()
         dbox.info()
