@@ -216,8 +216,6 @@ ENV DBOX_BASE_IMAGE_VERSION={base_image_version}
 # install dbox dependencies and default runtime
 RUN {cmd_install_dbox_dependencies}
 
-RUN wget -q https://raw.githubusercontent.com/rpm-software-management/dnf-plugins-core/a12205db1467cea22361a5618993fdee86d871d8/plugins/builddep.py -O $(rpm -q python3-dnf-plugins-core -l | grep 'builddep.py$')
-
 # install build dependencies of stack and all its projects
 RUN cd /root/dbox && dbox builddeps '*' --stack
 """.format(**locals())
