@@ -57,6 +57,28 @@ test: >-
     make check
 ---
 document: dbox-project
+document-version: 1
+name: libmodulemd
+clone: >-
+    gitc https://github.com/fedora-modularity/libmodulemd.git
+builddeps:
+    default: >-
+        dnf -y install jq clang git-core python3-pycodestyle python3-black redhat-rpm-config &&
+        dnf -y builddep libmodulemd
+configure: >-
+    meson ../..
+    --buildtype=debug
+    --prefix=/usr/
+    -Dwith_docs=false
+build: >-
+    ninja
+install: >-
+    ninja install
+# the unittests keep timeouting even though if run outside of container they work fine
+#unittest: >-
+    #MMD_SKIP_VALGRIND=True ninja test
+---
+document: dbox-project
 name: libsolv
 clone: >-
     gitc https://github.com/openSUSE/libsolv.git
@@ -266,27 +288,4 @@ test-wip: >-
 test-smoke: >-
     cd ../../dnf-behave-tests &&
     LC_ALL=C behave -Ddnf_executable=dnf-3 -v features --no-skipped --tags=tier1
-...
----
-document: dbox-project
-document-version: 1
-name: libmodulemd
-clone: >-
-    gitc https://github.com/fedora-modularity/libmodulemd.git
-builddeps:
-    default: >-
-        dnf -y install jq clang git-core python3-pycodestyle python3-black redhat-rpm-config &&
-        dnf -y builddep libmodulemd
-configure: >-
-    meson ../..
-    --buildtype=debug
-    --prefix=/usr/
-    -Dwith_docs=false
-build: >-
-    ninja
-install: >-
-    ninja install
-# the unittests keep timeouting even though if run outside of container they work fine
-#unittest: >-
-    #MMD_SKIP_VALGRIND=True ninja test
 ...
