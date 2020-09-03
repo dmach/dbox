@@ -1,0 +1,296 @@
+---
+document: dbox-stack
+document-version: 1
+name: dnf-5
+description: DNF 5 Package Manager Stack
+distro_setup:
+    'centos:8': >-
+        dnf -y install epel-release &&
+        dnf -y install dnf-plugins-core &&
+        dnf -y copr enable rpmsoftwaremanagement/dnf-nightly
+    default: >-
+        dnf -y install dnf-plugins-core &&
+        dnf -y copr enable rpmsoftwaremanagement/dnf-nightly
+builddeps:
+    default: >-
+        dnf -y install dnf-plugins-core vim-enhanced git-core bash-completion python3-argcomplete
+---
+document: dbox-project
+document-version: 1
+name: rpm
+clone: >-
+    gitc https://github.com/rpm-software-management/rpm.git
+builddeps:
+    default: >-
+        dnf -y --skip-unavailable builddep https://src.fedoraproject.org/rpms/rpm/raw/master/f/rpm.spec
+configure: >-
+    if [ -f ../../configure ] ; then
+        echo "File 'configure' exists. Skipping autoreconf and configure.";
+        exit 0;
+    fi;
+    ../../autoreconf -ivf;
+    ../../configure \
+        --prefix=/usr \
+        --sysconfdir=/etc \
+        --localstatedir=/var \
+        --sharedstatedir=/var/lib \
+        --libdir=$(rpm --eval '%{_libdir}') \
+        --build=$(rpm --eval '%{_target_platform}') \
+        --host=$(rpm --eval '%{_target_platform}') \
+        --with-vendor=redhat \
+        --with-external-db \
+        --with-lua \
+        --with-selinux \
+        --with-cap \
+        --with-acl \
+        --with-ndb \
+        --with-imaevm \
+        --enable-zstd \
+        --enable-sqlite \
+        --enable-python \
+        --with-crypto=openssl
+build: >-
+    make -j$(nproc)
+install: >-
+    make install
+test: >-
+    make check
+---
+document: dbox-project
+document-version: 1
+name: libmodulemd
+clone: >-
+    gitc https://github.com/fedora-modularity/libmodulemd.git
+builddeps:
+    default: >-
+        dnf -y install jq clang git-core python3-pycodestyle python3-black redhat-rpm-config &&
+        dnf -y builddep libmodulemd
+configure: >-
+    meson ../..
+    --buildtype=debug
+    --prefix=/usr/
+    -Ddeveloper_build=false
+    -Dwith_docs=false
+build: >-
+    ninja
+install: >-
+    ninja install
+# the unittests keep timeouting even though if run outside of container they work fine
+#unittest: >-
+    #MMD_SKIP_VALGRIND=True ninja test
+---
+document: dbox-project
+name: libsolv
+clone: >-
+    gitc https://github.com/openSUSE/libsolv.git
+builddeps:
+    default: >-
+        dnf -y --skip-unavailable builddep https://src.fedoraproject.org/rpms/libsolv/raw/master/f/libsolv.spec
+configure: >-
+    export BUILDDIR=$(pwd) &&
+    cd ../.. &&
+    cmake .
+    -GNinja
+    -B"$BUILDDIR"
+    -DFEDORA=1
+    -DENABLE_RPMDB=ON
+    -DENABLE_RPMDB_BYRPMHEADER=ON
+    -DENABLE_RPMDB_LIBRPM=ON
+    -DENABLE_RPMPKG_LIBRPM=ON
+    -DENABLE_RPMMD=ON
+    -DENABLE_COMPS=ON
+    -DENABLE_APPDATA=ON
+    -DUSE_VENDORDIRS=ON
+    -DWITH_LIBXML2=ON
+    -DENABLE_LZMA_COMPRESSION=ON
+    -DENABLE_BZIP2_COMPRESSION=ON
+    -DENABLE_ZSTD_COMPRESSION=ON
+    -DENABLE_ZCHUNK_COMPRESSION=ON
+    -DWITH_SYSTEM_ZCHUNK=ON
+    -DENABLE_HELIXREPO=ON
+    -DENABLE_SUSEREPO=ON
+    -DENABLE_DEBIAN=ON
+    -DENABLE_ARCHREPO=ON
+    -DMULTI_SEMANTICS=ON
+    -DENABLE_COMPLEX_DEPS=1
+    -DENABLE_PERL=OFF
+    -DENABLE_RUBY=OFF
+    -DENABLE_PYTHON=OFF
+    -DCMAKE_INSTALL_PREFIX=/usr/
+build: >-
+    ninja-build -j$(nproc)
+install: >-
+    ninja-build install
+unittest: >-
+    ninja test -j$(nproc)
+paths:
+---
+document: dbox-project
+document-version: 1
+name: libcomps
+clone: >-
+    gitc https://github.com/rpm-software-management/libcomps.git
+builddeps:
+    default: >-
+        dnf -y --skip-unavailable builddep https://raw.githubusercontent.com/rpm-software-management/libcomps/master/libcomps.spec
+configure: >-
+    cmake ../../libcomps
+    -DPYTHON_DESIRED=3
+    -DCMAKE_INSTALL_PREFIX=/usr/
+build: >-
+    make -j$(nproc)
+install: >-
+    make install
+---
+document: dbox-project
+document-version: 1
+name: librepo
+clone: >-
+    gitc https://github.com/rpm-software-management/librepo.git
+builddeps:
+    default: >-
+        dnf -y --skip-unavailable builddep https://raw.githubusercontent.com/rpm-software-management/librepo/master/librepo.spec
+configure: >-
+    cmake ../..
+    -DPYTHON_DESIRED=3
+    -DCMAKE_MODULE_PATH=$CMAKE_MODULE_PATH
+    -DCMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH
+    -DCMAKE_CXX_FLAGS="$(pkg-config -cflags libsolv)"
+    -DCMAKE_C_FLAGS="$(pkg-config -cflags libsolv)"
+    -DCMAKE_INSTALL_PREFIX=/usr/
+build: >-
+    make -j$(nproc)
+install: >-
+    make install
+---
+document: dbox-project
+document-version: 1
+name: libdnf
+clone: >-
+    gitc --branch=dnf-5-devel https://github.com/rpm-software-management/libdnf.git
+builddeps:
+    default: >-
+        dnf -y --skip-unavailable builddep https://raw.githubusercontent.com/rpm-software-management/libdnf/dnf-5-devel/libdnf.spec &&
+        dnf -y install dbus-daemon htop polkit procps-ng psmisc sdbus-cpp-devel
+configure: >-
+    cmake ../..
+    -DPERL_INSTALLDIRS=vendor
+    -DWITH_SANITIZERS=OFF
+    -DWITH_MAN=OFF
+    -DWITH_HTML=OFF
+    -DCMAKE_INSTALL_PREFIX=/usr/
+build: >-
+    make -j$(nproc)
+install: >-
+    make install
+unittest: >-
+    make test CTEST_OUTPUT_ON_FAILURE=TRUE
+---
+document: dbox-project
+document-version: 1
+name: createrepo_c
+clone: >-
+    gitc https://github.com/rpm-software-management/createrepo_c.git
+builddeps:
+    default: >-
+        dnf -y --skip-unavailable builddep https://raw.githubusercontent.com/rpm-software-management/createrepo_c/master/createrepo_c.spec
+configure: >-
+    cmake ../..
+    -DPYTHON_DESIRED=3
+    -DCMAKE_INSTALL_PREFIX=/usr/
+build: >-
+    make -j$(nproc)
+install: >-
+    make install
+unittest: >-
+    make test CTEST_OUTPUT_ON_FAILURE=TRUE
+---
+document: dbox-project
+document-version: 1
+name: dnf
+clone: >-
+    gitc https://github.com/rpm-software-management/dnf.git
+builddeps:
+    default: >-
+        dnf -y --skip-unavailable builddep https://raw.githubusercontent.com/rpm-software-management/dnf/master/dnf.spec
+configure: >-
+    cmake ../..
+    -DPYTHON_DESIRED=3
+    -DWITH_MAN=0
+    -DCMAKE_INSTALL_PREFIX=/usr/
+build: >-
+    make -j$(nproc)
+install: >-
+    make install
+fixup: >-
+    ln -sf dnf-3 $DESTDIR/usr/bin/dnf
+unittest: >-
+    TERM=xterm make test CTEST_OUTPUT_ON_FAILURE=TRUE
+---
+document: dbox-project
+document-version: 1
+name: dnf-plugins-core
+clone: >-
+    gitc https://github.com/rpm-software-management/dnf-plugins-core.git
+builddeps:
+    default: >-
+        dnf -y --skip-unavailable builddep https://raw.githubusercontent.com/rpm-software-management/dnf-plugins-core/master/dnf-plugins-core.spec
+configure: >-
+    cmake ../..
+    -DPYTHON_DESIRED=3
+    -DCMAKE_INSTALL_PREFIX=/usr/
+build: >-
+    make -j$(nproc) && make doc-man
+install: >-
+    make install
+paths:
+    DNF_PLUGINPATH:
+        - $PYTHON3_SITEARCH/dnf-plugins
+        - $PYTHON3_SITELIB/dnf-plugins
+---
+document: dbox-project
+document-version: 1
+name: dnf-plugins-extras
+clone: >-
+    gitc https://github.com/rpm-software-management/dnf-plugins-extras.git
+builddeps:
+    default: >-
+        dnf -y --skip-unavailable builddep https://raw.githubusercontent.com/rpm-software-management/dnf-plugins-extras/master/dnf-plugins-extras.spec
+configure: >-
+    cmake ../..
+    -DPYTHON_DESIRED=3
+    -DCMAKE_INSTALL_PREFIX=/usr/
+build: >-
+    make -j$(nproc) && make doc-man
+install: >-
+    make install
+paths:
+    DNF_PLUGINPATH:
+        - $PYTHON3_SITEARCH/dnf-plugins
+        - $PYTHON3_SITELIB/dnf-plugins
+---
+document: dbox-project
+document-version: 1
+name: ci-dnf-stack
+clone: >-
+    gitc https://github.com/rpm-software-management/ci-dnf-stack.git
+builddeps:
+    default: >-
+        dnf -y install createrepo_c findutils python3-behave python3-pexpect rpm-build rpm-sign &&
+        pip3 install pyftpdlib
+    'centos:8': >-
+        dnf -y install createrepo_c findutils python3-pexpect rpm-build rpm-sign &&
+        pip3 install behave pyftpdlib
+build: >-
+    cd ../../dnf-behave-tests/fixtures/specs/ &&
+    ./build.sh
+test: >-
+    cd ../../dnf-behave-tests &&
+    LC_ALL=C -Ddnf_executable=dnf-3 -v features
+test-wip: >-
+    cd ../../dnf-behave-tests &&
+    LC_ALL=C behave -Ddnf_executable=dnf-3 -v features --no-skipped --wip
+test-smoke: >-
+    cd ../../dnf-behave-tests &&
+    LC_ALL=C behave -Ddnf_executable=dnf-3 -v features --no-skipped --tags=tier1
+...
