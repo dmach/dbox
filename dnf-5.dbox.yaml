@@ -171,7 +171,7 @@ clone: >-
 builddeps:
     default: >-
         dnf -y --skip-unavailable builddep https://raw.githubusercontent.com/rpm-software-management/libdnf/dnf-5-devel/libdnf.spec &&
-        dnf -y install dbus-daemon htop polkit procps-ng psmisc sdbus-cpp-devel
+        dnf -y install dbus-daemon htop polkit procps-ng psmisc python3-dbus sdbus-cpp-devel
 configure: >-
     cmake ../..
     -DPERL_INSTALLDIRS=vendor
