@@ -1,0 +1,12 @@
+---
+document: dbox-user-config
+document-version: 1
+distro_setup:
+    default: >-
+        dnf -y install strace
+env:
+    LC_ALL: C.UTF-8
+    CFLAGS: -O3
+    CXXFLAGS: -O3
+volumes:
+    - ~/.sqliterc:/root/.sqliterc:ro,Z
