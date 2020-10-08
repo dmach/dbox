@@ -151,7 +151,7 @@ class Podman:
 
         return sorted(result)
 
-    def run(self, base_image_name, base_image_version, command):
+    def run(self, base_image_name, base_image_version, command, check=True):
         image = self.get_image(base_image_name, base_image_version)
         cmd = ["podman", "run"]
         # PTRACE capability is required by lsan (leak sanitizer)
@@ -160,7 +160,7 @@ class Podman:
         cmd += ["--workdir", "/root/dbox"]
         cmd += ["-it", "localhost/{image}".format(**locals())]
         cmd += command
-        return subprocess.run(cmd, check=True)
+        return subprocess.run(cmd, check=check)
 
     def build(self, base_image_name, base_image_version, no_cache=False, update=False):
         image = self.get_image(base_image_name, base_image_version)
@@ -622,7 +622,7 @@ class DBox:
 
         print("Entering dbox environment '{base_image}' for stack '{self.stack_name}'".format(**locals()))
         cmd = ["dbox", "shell"]
-        proc = self.podman.run(base_image_name, base_image_version, cmd)
+        proc = self.podman.run(base_image_name, base_image_version, cmd, check=False)
         if proc.returncode != 0:
             raise RuntimeError("Unable to enter an environment. Have you executed `dbox create {base_image_name}:{base_image_version}` before?".format(**locals()))
         print("Leaving dbox environment '{base_image}' for stack '{self.stack_name}'".format(**locals()))
