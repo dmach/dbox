@@ -28,6 +28,7 @@ DBOX = os.path.basename(sys.argv[0])
 # config directory according to XDG
 XDG_CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
 CONFIG_DIR = os.path.join(XDG_CONFIG_HOME, "dbox")
+USER_CONFIG = os.path.join(CONFIG_DIR, "user.dbox.yaml")
 
 # cache directory according to XDG
 XDG_CACHE_HOME = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
@@ -189,7 +190,12 @@ class Podman:
             base_image_name=base_image_name,
             base_image_version=base_image_version,
         )
-        cmd_install_user_packages = "echo ok"
+
+        cmd_distro_setup_user = self.dbox._get_distro_section(
+            self.dbox.user_config.get("distro_setup", {}),
+            base_image_name=base_image_name,
+            base_image_version=base_image_version,
+        )
         containerfile = \
 """
 FROM {base_image_name}:{base_image_version}
@@ -205,7 +211,7 @@ RUN echo "keepcache=1" >> /etc/dnf/dnf.conf && \
 RUN {cmd_distro_setup}
 
 # install user's favorite packages
-RUN {cmd_install_user_packages}
+RUN {cmd_distro_setup_user}
 
 # container identification
 ENV DBOX_CONTAINER=1
@@ -241,7 +247,7 @@ RUN {cmd_upgrade_all_packages}
         cache_dnf = os.path.join(cache_distrodir, "dnf")
         cache_ccache = os.path.join(cache_distrodir, "ccache")
         cache_gitc = os.path.join(CACHE_DIR, "gitc")
-        for i in (CACHE_DIR, cache_distrodir, cache_dnf, cache_ccache, cache_gitc):
+        for i in (CONFIG_DIR, CACHE_DIR, cache_distrodir, cache_dnf, cache_ccache, cache_gitc):
             mkdirs(i)
 
         result = []
@@ -257,6 +263,11 @@ RUN {cmd_upgrade_all_packages}
 
         # shared gitc cache
         result += ["--volume", "{cache_gitc}:/root/.cache/gitc:rw,Z".format(**locals())]
+
+        # user dbox config
+        user_config_path = USER_CONFIG
+        if os.path.isfile(user_config_path):
+            result += ["--volume", "{user_config_path}:/root/.config/dbox/user.dbox.yaml:ro,Z".format(**locals())]
 
         # user's .bash_profile
         bash_profile_path = os.path.expanduser("~/.bash_profile")
@@ -294,6 +305,13 @@ RUN {cmd_upgrade_all_packages}
         dbox_path = os.path.abspath(sys.argv[0])
         dbox_path = os.path.realpath(dbox_path)
         result += ["--volume", "{dbox_path}:/usr/bin/dbox:ro,Z".format(**locals())]
+
+        # user mounts
+        for vol in self.dbox.user_config.get("volumes", []):
+            # expand ~/ to home directory
+            if vol.startswith("~/"):
+                vol = os.path.expanduser("~") + vol[1:]
+            result += ["--volume", vol]
 
         return result
 
@@ -423,7 +441,7 @@ class DBox:
         self.os_release = OSRelease()
         self.topdir = self._find_topdir(os.getcwd())
         self.configdir = os.path.join(self.topdir, ".dbox")
-        self.stack, self.projects = self._load_config()
+        self.stack, self.projects, self.user_config = self._load_config()
         self.podman = Podman(self)
 
     def _find_topdir(self, path):
@@ -450,7 +468,12 @@ class DBox:
             if "paths" not in config or not config["paths"]:
                 config["paths"] = {}
 
-        return stack, projects
+        if os.path.isfile(USER_CONFIG):
+            user_config = yaml.load(open(USER_CONFIG, "r"), Loader=yaml.SafeLoader) or {}
+        else:
+            user_config = {}
+
+        return stack, projects, user_config
 
     def _get_distro_section(self, data, base_image_name=None, base_image_version=None):
         # if base image is not specified, use ENV variables
@@ -494,6 +517,9 @@ class DBox:
         # store values from env
         for key in all_paths:
             self._update_environ(environ, key, os.environ.get(key))
+
+        # use env from the user config
+        environ.update(self.user_config.get("env", {}))
 
         # use locales from the parent env
         for key, value in os.environ.items():

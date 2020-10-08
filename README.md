@@ -82,6 +82,16 @@ If the upstream stack configuration changes, pull it with:
     $ dbox stack-init dnf-4 --force
 
 
+User configuration
+==================
+
+It is possible to install additional packages to the containers,
+tweak environmental variables and mounted volumes by providing
+a user config located in `~/.config/dbox/user.dbox.yaml`.
+
+Use [user.dbox.yaml.example](user.dbox.yaml.example) as a template for your own configuration.
+
+
 Good to know
 ============
 
