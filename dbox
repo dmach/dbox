@@ -196,6 +196,8 @@ class Podman:
             base_image_name=base_image_name,
             base_image_version=base_image_version,
         )
+        if not cmd_distro_setup_user:
+            cmd_distro_setup_user = "echo 'user distro setup not configured'"
         containerfile = \
 """
 FROM {base_image_name}:{base_image_version}
