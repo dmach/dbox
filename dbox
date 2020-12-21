@@ -255,58 +255,58 @@ RUN {cmd_upgrade_all_packages}
         result = []
 
         # dbox topdir, where the stack projects are cloned
-        result += ["--volume", "{self.dbox.topdir}:/root/dbox:rw,Z".format(**locals())]
+        result += ["--volume", "{self.dbox.topdir}:/root/dbox:rw,z".format(**locals())]
 
         # shared DNF cache (per base_image)
-        result += ["--volume", "{cache_dnf}:/var/cache/dnf:rw,Z".format(**locals())]
+        result += ["--volume", "{cache_dnf}:/var/cache/dnf:rw,z".format(**locals())]
 
         # shared CCACHE cache (per base_image)
-        result += ["--volume", "{cache_ccache}:/root/.ccache:rw,Z".format(**locals())]
+        result += ["--volume", "{cache_ccache}:/root/.ccache:rw,z".format(**locals())]
 
         # shared gitc cache
-        result += ["--volume", "{cache_gitc}:/root/.cache/gitc:rw,Z".format(**locals())]
+        result += ["--volume", "{cache_gitc}:/root/.cache/gitc:rw,z".format(**locals())]
 
         # user dbox config
         user_config_path = USER_CONFIG
         if os.path.isfile(user_config_path):
-            result += ["--volume", "{user_config_path}:/root/.config/dbox/user.dbox.yaml:ro,Z".format(**locals())]
+            result += ["--volume", "{user_config_path}:/root/.config/dbox/user.dbox.yaml:ro,z".format(**locals())]
 
         # user's .bash_profile
         bash_profile_path = os.path.expanduser("~/.bash_profile")
         if os.path.isfile(bash_profile_path):
-            result += ["--volume", "{bash_profile_path}:/root/.bash_profile:ro,Z".format(**locals())]
+            result += ["--volume", "{bash_profile_path}:/root/.bash_profile:ro,z".format(**locals())]
 
         # user's .bashrc
         bashrc_path = os.path.expanduser("~/.bashrc")
         if os.path.isfile(bashrc_path):
-            result += ["--volume", "{bashrc_path}:/root/.bashrc:ro,Z".format(**locals())]
+            result += ["--volume", "{bashrc_path}:/root/.bashrc:ro,z".format(**locals())]
 
         # .bash_history - a different file for each container
         bash_history_path = os.path.join(cache_distrodir, "bash_history_{self.dbox.stack_name}".format(**locals()))
         if not os.path.isfile(bash_history_path):
             open(bash_history_path, "a")
-        result += ["--volume", "{bash_history_path}:/root/.bash_history:rw,Z".format(**locals())]
+        result += ["--volume", "{bash_history_path}:/root/.bash_history:rw,z".format(**locals())]
 
         # user's .gitconfig
         gitconfig_path = os.path.expanduser("~/.gitconfig")
         if os.path.isfile(gitconfig_path):
-            result += ["--volume", "{gitconfig_path}:/etc/gitconfig:ro,Z".format(**locals())]
+            result += ["--volume", "{gitconfig_path}:/etc/gitconfig:ro,z".format(**locals())]
 
         # user's .vimrc
         vimrc_path = os.path.expanduser("~/.vimrc")
         if os.path.isfile(vimrc_path):
-            result += ["--volume", "{vimrc_path}:/root/.vimrc:ro,Z".format(**locals())]
+            result += ["--volume", "{vimrc_path}:/root/.vimrc:ro,z".format(**locals())]
 
         # inject gitc into the container
         gitc_path = shutil.which("gitc")
         if gitc_path and os.path.isfile(gitc_path):
             gitc_path = os.path.realpath(gitc_path)
-            result += ["--volume", "{gitc_path}:/usr/bin/gitc:ro,Z".format(**locals())]
+            result += ["--volume", "{gitc_path}:/usr/bin/gitc:ro,z".format(**locals())]
 
         # inject dbox into the container
         dbox_path = os.path.abspath(sys.argv[0])
         dbox_path = os.path.realpath(dbox_path)
-        result += ["--volume", "{dbox_path}:/usr/bin/dbox:ro,Z".format(**locals())]
+        result += ["--volume", "{dbox_path}:/usr/bin/dbox:ro,z".format(**locals())]
 
         # user mounts
         for vol in self.dbox.user_config.get("volumes", []):
