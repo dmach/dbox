@@ -534,23 +534,37 @@ class DBox:
             project_dir = os.path.join(self.topdir, project["name"])
             is_available = os.path.exists(project_dir)
             environ["DESTDIR"] = self._get_project_workdir(project, "_install")
+            environ["SOURCEDIR"] = os.path.join(self.topdir, project["name"])
 
             yield (is_available, project, environ)
+
+            def _replace_variables(path, env):
+                for var, var_value in env.items():
+                    path = path.replace("$" + var, var_value)
+                return path
 
             # append default path tweaks to environ
             for key, paths in PATHS.items():
                 for path in reversed(paths):
-                    path = os.path.join(self._get_project_workdir(project, "_install"), path.strip("/"))
+                    path = _replace_variables(path, PATHS_ENV)
+                    path = path.strip("/")
+                    path = os.path.join(self._get_project_workdir(project, "_install"), path)
                     self._update_environ(environ, key, path)
 
             # append new paths to environ
             for key, paths in project["paths"].items():
                 for path in reversed(paths):
-                    path = os.path.join(self._get_project_workdir(project, "_install"), path.strip("/"))
+                    path = _replace_variables(path, PATHS_ENV)
+                    if path.startswith("$SOURCEDIR/"):
+                        # we don't want to prepend $SOURCEDIR with project workdir
+                        path = os.path.join(environ["SOURCEDIR"], path[11:])
+                    else:
+                        path = os.path.join(self._get_project_workdir(project, "_install"), path.strip("/"))
                     self._update_environ(environ, key, path)
 
         # finally, return only the environ after processing the last config
         environ.pop("DESTDIR", None)
+        environ.pop("SOURCEDIR", None)
         yield (False, None, environ)
 
     def _update_environ(self, environ, key, *values):
