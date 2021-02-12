@@ -22,7 +22,7 @@ clone: >-
     gitc https://github.com/rpm-software-management/rpm.git
 builddeps:
     default: >-
-        dnf -y --skip-unavailable builddep https://src.fedoraproject.org/rpms/rpm/raw/master/f/rpm.spec
+        dnf -y --skip-unavailable builddep https://src.fedoraproject.org/rpms/rpm/raw/rawhide/f/rpm.spec
 configure: >-
     if [ -f ../../configure ] ; then
         echo "File 'configure' exists. Skipping autoreconf and configure.";
@@ -85,7 +85,7 @@ clone: >-
     gitc https://github.com/openSUSE/libsolv.git
 builddeps:
     default: >-
-        dnf -y --skip-unavailable builddep https://src.fedoraproject.org/rpms/libsolv/raw/master/f/libsolv.spec
+        dnf -y --skip-unavailable builddep https://src.fedoraproject.org/rpms/libsolv/raw/rawhide/f/libsolv.spec
 configure: >-
     export BUILDDIR=$(pwd) &&
     cd ../.. &&
