@@ -185,6 +185,11 @@ install: >-
     make install
 unittest: >-
     make test CTEST_OUTPUT_ON_FAILURE=TRUE
+paths:
+    LIBDNF_PLUGIN_DIR:
+        - $LIBDIR/libdnf-plugins
+    LIBDNF_PYTHON_PLUGIN_DIR:
+        - $SOURCEDIR/libdnf-plugins/python_plugins_loader
 ---
 document: dbox-project
 document-version: 1
