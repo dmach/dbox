@@ -28,7 +28,9 @@ configure: >-
         echo "File 'configure' exists. Skipping autoreconf and configure.";
         exit 0;
     fi;
-    ../../autoreconf -ivf;
+    pushd ../..;
+    ./autogen.sh --noconfigure;
+    popd;
     ../../configure \
         --prefix=/usr \
         --sysconfdir=/etc \
