@@ -4,13 +4,17 @@ document-version: 1
 name: dnf-5
 description: DNF 5 Package Manager Stack
 distro_setup:
-    'centos:8': >-
+    centos:stream8: >-
+        dnf -y config-manager --set-enabled powertools &&
         dnf -y install epel-release &&
         dnf -y install dnf-plugins-core &&
-        dnf -y copr enable rpmsoftwaremanagement/dnf-nightly
+        dnf -y copr enable rpmsoftwaremanagement/dnf-nightly &&
+        dnf -y copr enable rpmsoftwaremanagement/dnf5-unstable centos-stream-8-x86_64 &&
+        dnf -y module enable swig:4.0
     default: >-
         dnf -y install dnf-plugins-core &&
-        dnf -y copr enable rpmsoftwaremanagement/dnf-nightly
+        dnf -y copr enable rpmsoftwaremanagement/dnf-nightly &&
+        dnf -y copr enable rpmsoftwaremanagement/dnf5-unstable
 builddeps:
     default: >-
         dnf -y install dnf-plugins-core vim-enhanced git-core bash-completion python3-argcomplete
@@ -179,6 +183,10 @@ configure: >-
     -DWITH_SANITIZERS=OFF
     -DWITH_MAN=OFF
     -DWITH_HTML=OFF
+    -DWITH_GO=OFF
+    -DWITH_PERL5=ON
+    -DWITH_PYTHON3=ON
+    -DWITH_RUBY=ON
     -DCMAKE_INSTALL_PREFIX=/usr/
 build: >-
     make -j$(nproc)
