@@ -274,11 +274,8 @@ clone: >-
     gitc https://github.com/rpm-software-management/ci-dnf-stack.git
 builddeps:
     default: >-
-        dnf -y install createrepo_c findutils python3-behave python3-pexpect rpm-build rpm-sign &&
-        pip3 install pyftpdlib
-    'centos:8': >-
-        dnf -y install createrepo_c findutils python3-pexpect rpm-build rpm-sign &&
-        pip3 install behave pyftpdlib
+        dnf -y builddep https://raw.githubusercontent.com/rpm-software-management/ci-dnf-stack/master/dnf-behave-tests/requirements.spec &&
+        pip3 install -r https://raw.githubusercontent.com/rpm-software-management/ci-dnf-stack/master/dnf-behave-tests/requirements.txt
 build: >-
     cd ../../dnf-behave-tests/fixtures/specs/ &&
     ./build.sh
