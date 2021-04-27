@@ -178,18 +178,6 @@ class Podman:
             base_image_name=base_image_name,
             base_image_version=base_image_version,
         )
-        cmd_distro_setup = self.dbox._get_distro_section(
-            self.dbox.stack.get("distro_setup", {}),
-            base_image_name=base_image_name,
-            base_image_version=base_image_version,
-        )
-        if not cmd_distro_setup:
-            cmd_distro_setup = "echo 'distro setup not configured'"
-        cmd_install_dbox_dependencies = self.dbox._get_distro_section(
-            INSTALL_DBOX_DEPENDENCIES,
-            base_image_name=base_image_name,
-            base_image_version=base_image_version,
-        )
 
         cmd_distro_setup_user = self.dbox._get_distro_section(
             self.dbox.user_config.get("distro_setup", {}),
@@ -198,6 +186,21 @@ class Podman:
         )
         if not cmd_distro_setup_user:
             cmd_distro_setup_user = "echo 'user distro setup not configured'"
+
+        cmd_distro_setup = self.dbox._get_distro_section(
+            self.dbox.stack.get("distro_setup", {}),
+            base_image_name=base_image_name,
+            base_image_version=base_image_version,
+        )
+        if not cmd_distro_setup:
+            cmd_distro_setup = "echo 'distro setup not configured'"
+
+        cmd_install_dbox_dependencies = self.dbox._get_distro_section(
+            INSTALL_DBOX_DEPENDENCIES,
+            base_image_name=base_image_name,
+            base_image_version=base_image_version,
+        )
+
         containerfile = \
 """
 FROM {base_image_name}:{base_image_version}
@@ -209,11 +212,11 @@ RUN echo "keepcache=1" >> /etc/dnf/dnf.conf && \
     echo "install_weak_deps=0" >> /etc/dnf/dnf.conf && \
     echo "%_minimize_writes 1" > /usr/lib/rpm/macros.d/macros.minimize_writes
 
-# distro setup - initialize additional repos here
-RUN {cmd_distro_setup}
-
 # install user's favorite packages
 RUN {cmd_distro_setup_user}
+
+# distro setup - initialize additional repos here
+RUN {cmd_distro_setup}
 
 # container identification
 ENV DBOX_CONTAINER=1
