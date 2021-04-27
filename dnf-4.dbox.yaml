@@ -65,8 +65,7 @@ clone: >-
     gitc https://github.com/fedora-modularity/libmodulemd.git
 builddeps:
     default: >-
-        dnf -y install jq clang git-core python3-pycodestyle python3-black redhat-rpm-config &&
-        dnf -y builddep libmodulemd
+        dnf -y builddep https://src.fedoraproject.org/rpms/libmodulemd/raw/rawhide/f/libmodulemd.spec
 configure: >-
     meson ../..
     --buildtype=debug
