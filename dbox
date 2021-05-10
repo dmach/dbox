@@ -155,6 +155,8 @@ class Podman:
     def run(self, base_image_name, base_image_version, command, check=True):
         image = self.get_image(base_image_name, base_image_version)
         cmd = ["podman", "run"]
+        # remove container on exit, all persistence we need is the stack data on disk
+        cmd += ["--rm"]
         # PTRACE capability is required by lsan (leak sanitizer)
         cmd += ["--cap-add", "SYS_PTRACE"]
         cmd += self._get_volumes(base_image_name, base_image_version)
