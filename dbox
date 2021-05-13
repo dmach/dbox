@@ -170,6 +170,7 @@ class Podman:
         cmd = ["podman", "build"]
         cmd += self._get_volumes(base_image_name, base_image_version)
         if no_cache:
+            cmd += ["--pull"]
             cmd += ["--no-cache"]
         cmd += ["--tag", image]
         # read Containerfile from stdin
