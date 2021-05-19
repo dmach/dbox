@@ -4,16 +4,16 @@ document-version: 1
 name: dnf-5
 description: DNF 5 Package Manager Stack
 distro_setup:
-    centos:stream8: >-
+    'centos:stream8': >-
         dnf -y config-manager --set-enabled powertools &&
         dnf -y install epel-release &&
         dnf -y install dnf-plugins-core &&
-        dnf -y copr enable rpmsoftwaremanagement/dnf-nightly &&
+        dnf -y copr enable rpmsoftwaremanagement/test-utils &&
         dnf -y copr enable rpmsoftwaremanagement/dnf5-unstable centos-stream-8-x86_64 &&
         dnf -y module enable swig:4.0
     default: >-
         dnf -y install dnf-plugins-core &&
-        dnf -y copr enable rpmsoftwaremanagement/dnf-nightly &&
+        dnf -y copr enable rpmsoftwaremanagement/test-utils &&
         dnf -y copr enable rpmsoftwaremanagement/dnf5-unstable
 builddeps:
     default: >-
@@ -175,8 +175,8 @@ clone: >-
     gitc --branch=dnf-5-devel https://github.com/rpm-software-management/libdnf.git
 builddeps:
     default: >-
-        dnf -y --skip-unavailable builddep https://raw.githubusercontent.com/rpm-software-management/libdnf/dnf-5-devel/libdnf.spec &&
-        dnf -y install dbus-daemon htop polkit procps-ng psmisc python3-dbus sdbus-cpp-devel
+        dnf -y --skip-unavailable builddep --define '_with_sanitizers 1' https://raw.githubusercontent.com/rpm-software-management/libdnf/dnf-5-devel/libdnf.spec &&
+        dnf -y install dbus-daemon polkit procps-ng psmisc
 configure: >-
     cmake ../..
     -DPERL_INSTALLDIRS=vendor
@@ -294,14 +294,14 @@ builddeps:
         pip3 install -r https://raw.githubusercontent.com/rpm-software-management/ci-dnf-stack/master/dnf-behave-tests/requirements.txt
 build: >-
     cd ../../dnf-behave-tests/fixtures/specs/ &&
-    ./build.sh
+    ./build.sh --force-rebuild
 test: >-
     cd ../../dnf-behave-tests &&
-    LC_ALL=C.UTF-8 -Ddnf_executable=dnf-3 -v features
+    LC_ALL=C.UTF-8 -Ddnf_executable=dnf-3 -Dpreserve=failed -v dnf
 test-wip: >-
     cd ../../dnf-behave-tests &&
-    LC_ALL=C.UTF-8 behave -Ddnf_executable=dnf-3 -v features --no-skipped --wip
+    LC_ALL=C.UTF-8 behave -Ddnf_executable=dnf-3 -Dpreserve=failed -v dnf --no-skipped --wip
 test-smoke: >-
     cd ../../dnf-behave-tests &&
-    LC_ALL=C.UTF-8 behave -Ddnf_executable=dnf-3 -v features --no-skipped --tags=tier1
+    LC_ALL=C.UTF-8 behave -Ddnf_executable=dnf-3 -Dpreserve=failed -v dnf --no-skipped --tags=tier1
 ...

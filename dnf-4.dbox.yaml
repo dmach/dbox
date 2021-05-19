@@ -4,12 +4,15 @@ document-version: 1
 name: dnf-4
 description: DNF 4 Package Manager Stack
 distro_setup:
-    'centos:8': >-
+    'centos:stream8': >-
+        dnf -y config-manager --set-enabled powertools &&
         dnf -y install epel-release &&
         dnf -y install dnf-plugins-core &&
+        dnf -y copr enable rpmsoftwaremanagement/test-utils &&
         dnf -y copr enable rpmsoftwaremanagement/dnf-nightly
     default: >-
         dnf -y install dnf-plugins-core &&
+        dnf -y copr enable rpmsoftwaremanagement/test-utils &&
         dnf -y copr enable rpmsoftwaremanagement/dnf-nightly
 builddeps:
     default: >-
@@ -277,14 +280,14 @@ builddeps:
         pip3 install -r https://raw.githubusercontent.com/rpm-software-management/ci-dnf-stack/master/dnf-behave-tests/requirements.txt
 build: >-
     cd ../../dnf-behave-tests/fixtures/specs/ &&
-    ./build.sh
+    ./build.sh --force-rebuild
 test: >-
     cd ../../dnf-behave-tests &&
-    LC_ALL=C -Ddnf_executable=dnf-3 -v features
+    LC_ALL=C.UTF-8 -Ddnf_executable=dnf-3 -Dpreserve=failed -v dnf
 test-wip: >-
     cd ../../dnf-behave-tests &&
-    LC_ALL=C behave -Ddnf_executable=dnf-3 -v features --no-skipped --wip
+    LC_ALL=C.UTF-8 behave -Ddnf_executable=dnf-3 -Dpreserve=failed -v dnf --no-skipped --wip
 test-smoke: >-
     cd ../../dnf-behave-tests &&
-    LC_ALL=C behave -Ddnf_executable=dnf-3 -v features --no-skipped --tags=tier1
+    LC_ALL=C.UTF-8 behave -Ddnf_executable=dnf-3 -Dpreserve=failed -v dnf --no-skipped --tags=tier1
 ...
