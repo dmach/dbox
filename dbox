@@ -967,11 +967,18 @@ def get_parser():
         nargs="*",
     ).completer = completer_available_projects
     test_parser.add_argument(
+        "--all",
+        action="store_const",
+        dest="test_type",
+        const="all",
+        help="Run \"all\" tests",
+    )
+    test_parser.add_argument(
         "--wip",
         action="store_const",
         dest="test_type",
         const="wip",
-        help="Run only \"work in progress\" tests",
+        help="Run only \"work in progress\" tests (default)",
     )
     test_parser.add_argument(
         "--smoke",
