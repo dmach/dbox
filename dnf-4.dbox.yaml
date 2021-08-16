@@ -90,6 +90,8 @@ clone: >-
 builddeps:
     default: >-
         dnf -y --skip-unavailable builddep https://src.fedoraproject.org/rpms/libsolv/raw/rawhide/f/libsolv.spec
+    "centos:stream8":
+        dnf -y --skip-unavailable builddep https://git.centos.org/rpms/libsolv/raw/c8s/f/SPECS/libsolv.spec
 configure: >-
     export BUILDDIR=$(pwd) &&
     cd ../.. &&
