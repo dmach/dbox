@@ -3,7 +3,6 @@
 
 
 import argparse
-import distutils.sysconfig
 import fnmatch
 import json
 import os
@@ -11,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import urllib.request
 
 import yaml
@@ -45,9 +45,11 @@ DBOX_BASE_IMAGE_VERSION = os.environ.get("DBOX_BASE_IMAGE_VERSION", None)
 
 # environment variables used in the path tweaks
 PATHS_ENV = {
-    "PYTHON3_SITEARCH": distutils.sysconfig.get_python_lib(1),
-    "PYTHON3_SITELIB": distutils.sysconfig.get_python_lib(),
-    "LIBDIR": distutils.sysconfig.get_config_var("LIBDIR"),
+    "PYTHON3_SITEARCH": sysconfig.get_path('platlib'),
+    # sysconfig.get_python_lib(1),
+    "PYTHON3_SITELIB": sysconfig.get_path('purelib'),
+    # sysconfig.get_python_lib(),
+    "LIBDIR": sysconfig.get_config_var("LIBDIR"),
 }
 
 
@@ -59,7 +61,7 @@ PATHS = {
     "LD_LIBRARY_PATH": [PATHS_ENV["LIBDIR"]],
     "LIBRARY_PATH": [PATHS_ENV["LIBDIR"]],
     "PATH": ["/usr/sbin", "/usr/bin"],
-    "PKG_CONFIG_PATH": [distutils.sysconfig.get_config_var("LIBPC")],
+    "PKG_CONFIG_PATH": [sysconfig.get_config_var("LIBPC")],
     "PKG_CONFIG_SYSTEM_INCLUDE_PATH": ["/usr/include"],
     "PYTHONPATH": [PATHS_ENV["PYTHON3_SITEARCH"], PATHS_ENV["PYTHON3_SITELIB"]],
 }
